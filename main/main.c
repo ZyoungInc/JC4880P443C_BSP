@@ -176,6 +176,19 @@ static void set_tile_x(wp7_tile_t *tile, int32_t x)
     lv_obj_center(tile->label);
 }
 
+static void set_tile_width(wp7_tile_t *tile, int32_t width)
+{
+    if (width <= 0) {
+        lv_obj_add_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_obj_remove_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(tile->obj, tile->x, tile->y);
+    lv_obj_set_size(tile->obj, width, tile->size);
+    lv_obj_center(tile->label);
+}
+
 static void set_list_item_geometry(wp7_list_item_t *item, int32_t x)
 {
     if (x <= -item->w || x >= s_wp7.screen_w) {
@@ -355,10 +368,16 @@ static void render_horizontal_transition(wp7_page_dir_t dir, int32_t progress)
             set_list_item_geometry(item, x);
         } else {
             wp7_tile_t *tile = &s_wp7.tiles[index];
-            const int32_t x = -tile->size + ((tile->x + tile->size) * eased_progress / WP7_TILE_PROGRESS_UNIT);
 
             set_tile_number(tile, s_wp7.page, index);
-            set_tile_x(tile, x);
+
+            if ((index % WP7_COLUMNS) == 0) {
+                const int32_t x = -tile->size + ((tile->x + tile->size) * eased_progress / WP7_TILE_PROGRESS_UNIT);
+                set_tile_x(tile, x);
+            } else {
+                const int32_t width = tile->size * eased_progress / WP7_TILE_PROGRESS_UNIT;
+                set_tile_width(tile, width);
+            }
         }
     }
 }
@@ -660,7 +679,7 @@ static void create_list_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_
         lv_obj_remove_style_all(item_obj);
         lv_obj_set_size(item_obj, row_w, row_h);
         lv_obj_set_pos(item_obj, pad, content_top + i * (row_h + gap));
-        lv_obj_set_style_bg_color(item_obj, lv_color_hex(0x111820), 0);
+        lv_obj_set_style_bg_color(item_obj, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(item_obj, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(item_obj, 0, 0);
         lv_obj_remove_flag(item_obj, LV_OBJ_FLAG_SCROLLABLE);
