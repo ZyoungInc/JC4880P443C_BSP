@@ -18,6 +18,11 @@
 #define WP7_SCREEN_PAD_PERMILLE      34
 #define WP7_TILE_GAP_PERMILLE        34
 #define WP7_TILE_ANIM_MS             90
+#define WP7_TILE_PROGRESS_UNIT       1000
+#define WP7_TILE_STAGGER_UNIT        (WP7_TILE_PROGRESS_UNIT / 2)
+#define WP7_DRAG_DISTANCE_PERMILLE   550
+#define WP7_DRAG_THRESHOLD_PERMILLE  20
+#define WP7_RELEASE_COMMIT_PERMILLE  220
 
 typedef struct {
     lv_obj_t *obj;
@@ -28,21 +33,24 @@ typedef struct {
 } wp7_tile_t;
 
 typedef enum {
-    WP7_PHASE_IDLE,
-    WP7_PHASE_NEXT_OUT,
-    WP7_PHASE_NEXT_IN,
-    WP7_PHASE_PREV_OUT,
-    WP7_PHASE_PREV_IN,
-} wp7_anim_phase_t;
+    WP7_DIR_NONE,
+    WP7_DIR_NEXT,
+    WP7_DIR_PREV,
+} wp7_page_dir_t;
 
 typedef struct {
     wp7_tile_t tiles[WP7_MAX_TILES];
     int32_t tile_count;
+    int32_t screen_h;
     int32_t page;
     int32_t target_page;
-    int32_t anim_index;
+    int32_t drag_start_y;
+    int32_t drag_progress;
+    bool drag_active;
     bool animating;
-    wp7_anim_phase_t phase;
+    bool commit_transition;
+    wp7_page_dir_t drag_dir;
+    wp7_page_dir_t anim_dir;
 } wp7_screen_t;
 
 static wp7_screen_t s_wp7;
@@ -51,6 +59,38 @@ static int32_t scaled_px(int32_t base, int32_t permille)
 {
     int32_t value = (base * permille) / 1000;
     return value > 0 ? value : 1;
+}
+
+static int32_t clamp_i32(int32_t value, int32_t min, int32_t max)
+{
+    if (value < min) {
+        return min;
+    }
+
+    if (value > max) {
+        return max;
+    }
+
+    return value;
+}
+
+static int32_t transition_progress_max(void)
+{
+    if (s_wp7.tile_count <= 0) {
+        return 0;
+    }
+
+    return (((s_wp7.tile_count - 1) * WP7_TILE_STAGGER_UNIT) + WP7_TILE_PROGRESS_UNIT) * 2;
+}
+
+static int32_t transition_drag_distance(void)
+{
+    return scaled_px(s_wp7.screen_h, WP7_DRAG_DISTANCE_PERMILLE);
+}
+
+static int32_t transition_drag_threshold(void)
+{
+    return scaled_px(s_wp7.screen_h, WP7_DRAG_THRESHOLD_PERMILLE);
 }
 
 static void set_tile_number(wp7_tile_t *tile, int32_t page, int32_t index)
@@ -72,134 +112,182 @@ static void set_tile_geometry(wp7_tile_t *tile, int32_t y, int32_t height)
     lv_obj_center(tile->label);
 }
 
-static void tile_contract_up_cb(void *var, int32_t height)
+static int32_t ordered_out_index(wp7_page_dir_t dir, int32_t index)
 {
-    wp7_tile_t *tile = (wp7_tile_t *)var;
-
-    set_tile_geometry(tile, tile->y - (tile->size - height), height);
+    return dir == WP7_DIR_PREV ? s_wp7.tile_count - 1 - index : index;
 }
 
-static void tile_contract_down_cb(void *var, int32_t height)
+static int32_t step_progress(int32_t progress, int32_t order)
 {
-    wp7_tile_t *tile = (wp7_tile_t *)var;
-
-    set_tile_geometry(tile, tile->y + (tile->size - height), height);
+    return clamp_i32(progress - order * WP7_TILE_STAGGER_UNIT, 0, WP7_TILE_PROGRESS_UNIT);
 }
 
-static void tile_expand_from_bottom_cb(void *var, int32_t height)
+static void render_static_page(int32_t page)
 {
-    wp7_tile_t *tile = (wp7_tile_t *)var;
+    for (int32_t i = 0; i < s_wp7.tile_count; i++) {
+        wp7_tile_t *tile = &s_wp7.tiles[i];
 
-    set_tile_geometry(tile, tile->y + (tile->size - height), height);
+        set_tile_number(tile, page, i);
+        set_tile_geometry(tile, tile->y, tile->size);
+    }
 }
 
-static void tile_expand_from_top_cb(void *var, int32_t height)
+static void render_transition(wp7_page_dir_t dir, int32_t progress)
 {
-    wp7_tile_t *tile = (wp7_tile_t *)var;
+    const int32_t out_phase_end = transition_progress_max() / 2;
+    const int32_t max_progress = transition_progress_max();
 
-    set_tile_geometry(tile, tile->y, height);
-}
+    progress = clamp_i32(progress, 0, max_progress);
 
-static void start_next_tile_anim(void);
+    if (progress < out_phase_end) {
+        for (int32_t i = 0; i < s_wp7.tile_count; i++) {
+            const int32_t order = ordered_out_index(dir, i);
+            const int32_t local_progress = step_progress(progress, order);
+            wp7_tile_t *tile = &s_wp7.tiles[i];
+            const int32_t height = tile->size * (WP7_TILE_PROGRESS_UNIT - local_progress) / WP7_TILE_PROGRESS_UNIT;
+            const int32_t y = dir == WP7_DIR_NEXT ? tile->y : tile->y + (tile->size - height);
 
-static void tile_anim_completed_cb(lv_anim_t *anim)
-{
-    (void)anim;
-    start_next_tile_anim();
-}
+            set_tile_number(tile, s_wp7.page, i);
+            set_tile_geometry(tile, y, height);
+        }
 
-static int32_t ordered_tile_index(void)
-{
-    if (s_wp7.phase == WP7_PHASE_PREV_OUT) {
-        return s_wp7.tile_count - 1 - s_wp7.anim_index;
+        return;
     }
 
-    return s_wp7.anim_index;
+    progress -= out_phase_end;
+
+    for (int32_t i = 0; i < s_wp7.tile_count; i++) {
+        const int32_t local_progress = step_progress(progress, i);
+        wp7_tile_t *tile = &s_wp7.tiles[i];
+        const int32_t height = tile->size * local_progress / WP7_TILE_PROGRESS_UNIT;
+        const int32_t y = dir == WP7_DIR_NEXT ? tile->y + (tile->size - height) : tile->y;
+
+        set_tile_number(tile, s_wp7.target_page, i);
+        set_tile_geometry(tile, y, height);
+    }
 }
 
-static void start_tile_anim(wp7_tile_t *tile, lv_anim_exec_xcb_t exec_cb, int32_t start, int32_t end)
+static void transition_anim_cb(void *var, int32_t progress)
 {
+    (void)var;
+    render_transition(s_wp7.anim_dir, progress);
+}
+
+static void transition_anim_completed_cb(lv_anim_t *anim)
+{
+    (void)anim;
+
+    if (s_wp7.commit_transition) {
+        s_wp7.page = s_wp7.target_page;
+    }
+
+    render_static_page(s_wp7.page);
+    s_wp7.animating = false;
+    s_wp7.commit_transition = false;
+    s_wp7.anim_dir = WP7_DIR_NONE;
+    s_wp7.drag_dir = WP7_DIR_NONE;
+    s_wp7.drag_progress = 0;
+}
+
+static void start_progress_anim(wp7_page_dir_t dir, int32_t start, int32_t end, bool commit)
+{
+    s_wp7.animating = true;
+    s_wp7.commit_transition = commit;
+    s_wp7.anim_dir = dir;
+
+    if (start == end) {
+        render_transition(dir, end);
+        transition_anim_completed_cb(NULL);
+        return;
+    }
+
     lv_anim_t anim;
 
     lv_anim_init(&anim);
-    lv_anim_set_var(&anim, tile);
-    lv_anim_set_exec_cb(&anim, exec_cb);
+    lv_anim_set_var(&anim, &s_wp7);
+    lv_anim_set_exec_cb(&anim, transition_anim_cb);
     lv_anim_set_values(&anim, start, end);
-    lv_anim_set_duration(&anim, WP7_TILE_ANIM_MS);
-    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
-    lv_anim_set_completed_cb(&anim, tile_anim_completed_cb);
+    int32_t duration = (end > start ? end - start : start - end) * WP7_TILE_ANIM_MS / WP7_TILE_PROGRESS_UNIT;
+    if (duration < WP7_TILE_ANIM_MS) {
+        duration = WP7_TILE_ANIM_MS;
+    }
+    lv_anim_set_duration(&anim, duration);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+    lv_anim_set_completed_cb(&anim, transition_anim_completed_cb);
     lv_anim_start(&anim);
 }
 
-static void start_next_tile_anim(void)
+static void update_drag_progress(int32_t y)
 {
-    if (s_wp7.anim_index >= s_wp7.tile_count) {
-        if (s_wp7.phase == WP7_PHASE_NEXT_OUT) {
-            s_wp7.phase = WP7_PHASE_NEXT_IN;
-            s_wp7.page = s_wp7.target_page;
-            s_wp7.anim_index = 0;
-        } else if (s_wp7.phase == WP7_PHASE_PREV_OUT) {
-            s_wp7.phase = WP7_PHASE_PREV_IN;
-            s_wp7.page = s_wp7.target_page;
-            s_wp7.anim_index = 0;
+    const int32_t delta_y = y - s_wp7.drag_start_y;
+    const int32_t threshold = transition_drag_threshold();
+    const int32_t distance = transition_drag_distance();
+    const int32_t max_progress = transition_progress_max();
+
+    if (s_wp7.drag_dir == WP7_DIR_NONE) {
+        if (delta_y < -threshold) {
+            s_wp7.drag_dir = WP7_DIR_NEXT;
+            s_wp7.target_page = s_wp7.page + 1;
+        } else if (delta_y > threshold && s_wp7.page > 0) {
+            s_wp7.drag_dir = WP7_DIR_PREV;
+            s_wp7.target_page = s_wp7.page - 1;
         } else {
-            s_wp7.phase = WP7_PHASE_IDLE;
-            s_wp7.animating = false;
             return;
         }
     }
 
-    const int32_t index = ordered_tile_index();
-    wp7_tile_t *tile = &s_wp7.tiles[index];
+    const int32_t drag_distance = s_wp7.drag_dir == WP7_DIR_NEXT ? -delta_y : delta_y;
+    const int32_t progress = clamp_i32(drag_distance * max_progress / distance, 0, max_progress);
 
-    if (s_wp7.phase == WP7_PHASE_NEXT_OUT) {
-        s_wp7.anim_index++;
-        start_tile_anim(tile, tile_contract_up_cb, tile->size, 0);
-    } else if (s_wp7.phase == WP7_PHASE_NEXT_IN) {
-        set_tile_number(tile, s_wp7.page, index);
-        set_tile_geometry(tile, tile->y + tile->size, 0);
-        s_wp7.anim_index++;
-        start_tile_anim(tile, tile_expand_from_bottom_cb, 0, tile->size);
-    } else if (s_wp7.phase == WP7_PHASE_PREV_OUT) {
-        s_wp7.anim_index++;
-        start_tile_anim(tile, tile_contract_down_cb, tile->size, 0);
-    } else if (s_wp7.phase == WP7_PHASE_PREV_IN) {
-        set_tile_number(tile, s_wp7.page, index);
-        set_tile_geometry(tile, tile->y, 0);
-        s_wp7.anim_index++;
-        start_tile_anim(tile, tile_expand_from_top_cb, 0, tile->size);
-    }
+    s_wp7.drag_progress = progress;
+    render_transition(s_wp7.drag_dir, progress);
 }
 
-static void start_page_change(bool next)
+static void finish_drag(void)
 {
-    if (s_wp7.animating || s_wp7.tile_count <= 0) {
+    if (!s_wp7.drag_active || s_wp7.drag_dir == WP7_DIR_NONE) {
+        s_wp7.drag_active = false;
         return;
     }
 
-    if (!next && s_wp7.page <= 0) {
-        return;
-    }
+    const int32_t max_progress = transition_progress_max();
+    const int32_t commit_progress = max_progress * WP7_RELEASE_COMMIT_PERMILLE / 1000;
+    const bool commit = s_wp7.drag_progress >= commit_progress;
+    const int32_t end = commit ? max_progress : 0;
 
-    s_wp7.target_page = next ? s_wp7.page + 1 : s_wp7.page - 1;
-    s_wp7.phase = next ? WP7_PHASE_NEXT_OUT : WP7_PHASE_PREV_OUT;
-    s_wp7.anim_index = 0;
-    s_wp7.animating = true;
-    start_next_tile_anim();
+    s_wp7.drag_active = false;
+    start_progress_anim(s_wp7.drag_dir, s_wp7.drag_progress, end, commit);
 }
 
-static void screen_gesture_cb(lv_event_t *event)
+static void screen_touch_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_GESTURE) {
+    const lv_event_code_t code = lv_event_get_code(event);
+    lv_indev_t *indev = lv_indev_active();
+    lv_point_t point;
+
+    if (indev == NULL) {
         return;
     }
 
-    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+    if (code == LV_EVENT_PRESSED) {
+        if (s_wp7.animating) {
+            return;
+        }
 
-    if (dir == LV_DIR_TOP) {
-        start_page_change(true);
-    } else if (dir == LV_DIR_BOTTOM) {
-        start_page_change(false);
+        lv_indev_get_point(indev, &point);
+        s_wp7.drag_start_y = point.y;
+        s_wp7.drag_progress = 0;
+        s_wp7.drag_dir = WP7_DIR_NONE;
+        s_wp7.drag_active = true;
+    } else if (code == LV_EVENT_PRESSING) {
+        if (!s_wp7.drag_active || s_wp7.animating) {
+            return;
+        }
+
+        lv_indev_get_point(indev, &point);
+        update_drag_progress(point.y);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        finish_drag();
     }
 }
 
@@ -210,25 +298,28 @@ static void create_status_bar(lv_obj_t *screen, int32_t screen_w, int32_t status
     lv_obj_set_size(bar, screen_w, status_h);
     lv_obj_set_pos(bar, 0, 0);
     lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(bar, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_flag(bar, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t *wifi_label = lv_label_create(bar);
     lv_label_set_text(wifi_label, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_color(wifi_label, lv_color_hex(0xEAF7FF), 0);
     lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_20, 0);
     lv_obj_align(wifi_label, LV_ALIGN_LEFT_MID, pad, 0);
+    lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t *time_label = lv_label_create(bar);
     lv_label_set_text(time_label, "09:41");
     lv_obj_set_style_text_color(time_label, lv_color_hex(0xEAF7FF), 0);
     lv_obj_set_style_text_font(time_label, &lv_font_montserrat_24, 0);
     lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(time_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t *battery_label = lv_label_create(bar);
     lv_label_set_text(battery_label, LV_SYMBOL_BATTERY_3);
     lv_obj_set_style_text_color(battery_label, lv_color_hex(0xEAF7FF), 0);
     lv_obj_set_style_text_font(battery_label, &lv_font_montserrat_20, 0);
     lv_obj_align(battery_label, LV_ALIGN_RIGHT_MID, -pad, 0);
+    lv_obj_add_flag(battery_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
 }
 
 static void create_tile_grid(lv_obj_t *screen, int32_t screen_w, int32_t screen_h, int32_t status_h)
@@ -261,13 +352,14 @@ static void create_tile_grid(lv_obj_t *screen, int32_t screen_w, int32_t screen_
             lv_obj_set_style_bg_opa(tile_obj, LV_OPA_COVER, 0);
             lv_obj_set_style_radius(tile_obj, 0, 0);
             lv_obj_remove_flag(tile_obj, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_add_flag(tile_obj, LV_OBJ_FLAG_GESTURE_BUBBLE);
+            lv_obj_add_flag(tile_obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
 
             lv_obj_t *label = lv_label_create(tile_obj);
             lv_label_set_text_fmt(label, "%ld", (long)tile_number);
             lv_obj_set_style_text_color(label, lv_color_hex(0x06324A), 0);
             lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
             lv_obj_center(label);
+            lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
 
             wp7_tile_t *tile_data = &s_wp7.tiles[tile_number - 1];
             tile_data->obj = tile_obj;
@@ -290,14 +382,18 @@ static void create_wp7_first_screen(void)
     lv_obj_clean(screen);
     lv_obj_remove_style_all(screen);
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(screen, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
-    lv_obj_add_event_cb(screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(screen, screen_touch_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(screen, screen_touch_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(screen, screen_touch_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(screen, screen_touch_cb, LV_EVENT_PRESS_LOST, NULL);
 
     s_wp7 = (wp7_screen_t) {
         .page = 0,
         .target_page = 0,
-        .phase = WP7_PHASE_IDLE,
+        .screen_h = screen_h,
     };
 
     create_status_bar(screen, screen_w, status_h, pad);
