@@ -125,6 +125,22 @@ static int32_t step_progress(int32_t progress, int32_t order)
     return clamp_i32(progress - order * WP7_TILE_STAGGER_UNIT, 0, WP7_TILE_PROGRESS_UNIT);
 }
 
+static int32_t ease_in_out_cubic(int32_t progress)
+{
+    progress = clamp_i32(progress, 0, WP7_TILE_PROGRESS_UNIT);
+
+    if (progress < WP7_TILE_PROGRESS_UNIT / 2) {
+        return (int32_t)(4LL * progress * progress * progress /
+                         (WP7_TILE_PROGRESS_UNIT * WP7_TILE_PROGRESS_UNIT));
+    }
+
+    int32_t inverse = WP7_TILE_PROGRESS_UNIT - progress;
+
+    return WP7_TILE_PROGRESS_UNIT -
+           (int32_t)(4LL * inverse * inverse * inverse /
+                     (WP7_TILE_PROGRESS_UNIT * WP7_TILE_PROGRESS_UNIT));
+}
+
 static void render_static_page(int32_t page)
 {
     for (int32_t i = 0; i < s_wp7.tile_count; i++) {
@@ -146,8 +162,9 @@ static void render_transition(wp7_page_dir_t dir, int32_t progress)
         for (int32_t i = 0; i < s_wp7.tile_count; i++) {
             const int32_t order = ordered_out_index(dir, i);
             const int32_t local_progress = step_progress(progress, order);
+            const int32_t eased_progress = ease_in_out_cubic(local_progress);
             wp7_tile_t *tile = &s_wp7.tiles[i];
-            const int32_t height = tile->size * (WP7_TILE_PROGRESS_UNIT - local_progress) / WP7_TILE_PROGRESS_UNIT;
+            const int32_t height = tile->size * (WP7_TILE_PROGRESS_UNIT - eased_progress) / WP7_TILE_PROGRESS_UNIT;
             const int32_t y = dir == WP7_DIR_NEXT ? tile->y : tile->y + (tile->size - height);
 
             set_tile_number(tile, s_wp7.page, i);
@@ -161,8 +178,9 @@ static void render_transition(wp7_page_dir_t dir, int32_t progress)
 
     for (int32_t i = 0; i < s_wp7.tile_count; i++) {
         const int32_t local_progress = step_progress(progress, i);
+        const int32_t eased_progress = ease_in_out_cubic(local_progress);
         wp7_tile_t *tile = &s_wp7.tiles[i];
-        const int32_t height = tile->size * local_progress / WP7_TILE_PROGRESS_UNIT;
+        const int32_t height = tile->size * eased_progress / WP7_TILE_PROGRESS_UNIT;
         const int32_t y = dir == WP7_DIR_NEXT ? tile->y + (tile->size - height) : tile->y;
 
         set_tile_number(tile, s_wp7.target_page, i);
