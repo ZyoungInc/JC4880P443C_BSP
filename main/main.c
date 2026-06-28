@@ -36,10 +36,10 @@
 #define WP7_SETTINGS_CONTENT_COUNT   3
 #define WP7_ANIM_SPEED_MIN           50
 #define WP7_ANIM_SPEED_DEFAULT       100
-#define WP7_ANIM_SPEED_MAX           125
+#define WP7_ANIM_SPEED_MAX           145
 #define WP7_ACTUAL_SPEED_MIN_PERMILLE 280
 #define WP7_ACTUAL_SPEED_DEFAULT_PERMILLE 1000
-#define WP7_ACTUAL_SPEED_MAX_PERMILLE 1150
+#define WP7_ACTUAL_SPEED_MAX_PERMILLE 1420
 #define WP7_HORIZONTAL_SPEED_PERMILLE 820
 #define WP7_SETTINGS_SPEED_PERMILLE 760
 #define WP7_NVS_NAMESPACE            "wp7_ui"
@@ -741,36 +741,30 @@ static void render_horizontal_transition(wp7_page_dir_t dir, int32_t progress)
 static void render_tile_collapse(wp7_tile_t *tile, int32_t eased_progress, bool toward_right)
 {
     const int32_t width = tile->size * (WP7_TILE_PROGRESS_UNIT - eased_progress) / WP7_TILE_PROGRESS_UNIT;
-    const int32_t x = toward_right ? tile->x + (tile->size - width) : tile->x - (tile->size - width);
+    const int32_t x = toward_right ? tile->x + (tile->size - width) : tile->x;
 
     set_tile_box(tile, x, tile->y, width, tile->size, LV_OPA_COVER);
 }
 
-static void render_tile_restore(wp7_tile_t *tile, int32_t eased_progress, bool from_right)
+static void render_tile_restore(wp7_tile_t *tile, int32_t eased_progress, bool grow_to_right)
 {
     const int32_t width = tile->size * eased_progress / WP7_TILE_PROGRESS_UNIT;
-    const int32_t x = from_right ? tile->x + (tile->size - width) : tile->x - (tile->size - width);
+    const int32_t x = grow_to_right ? tile->x : tile->x + (tile->size - width);
 
     set_tile_box(tile, x, tile->y, width, tile->size, LV_OPA_COVER);
 }
 
-static void render_clicked_tile_scale(wp7_tile_t *tile, int32_t eased_progress, bool appear)
+static void render_clicked_tile_fade(wp7_tile_t *tile, int32_t eased_progress, bool appear)
 {
-    int32_t size;
     lv_opa_t opa;
 
     if (appear) {
-        size = tile->size * eased_progress / WP7_TILE_PROGRESS_UNIT;
         opa = (lv_opa_t)(LV_OPA_COVER * eased_progress / WP7_TILE_PROGRESS_UNIT);
     } else {
-        size = tile->size * (WP7_TILE_PROGRESS_UNIT - eased_progress) / WP7_TILE_PROGRESS_UNIT;
         opa = (lv_opa_t)(LV_OPA_COVER * (WP7_TILE_PROGRESS_UNIT - eased_progress) / WP7_TILE_PROGRESS_UNIT);
     }
 
-    const int32_t x = tile->x + (tile->size - size) / 2;
-    const int32_t y = tile->y + (tile->size - size) / 2;
-
-    set_tile_box(tile, x, y, size, size, opa);
+    set_tile_box(tile, tile->x, tile->y, tile->size, tile->size, opa);
 }
 
 static void render_settings_content_in(int32_t progress)
@@ -863,7 +857,7 @@ static void render_settings_open_transition(int32_t progress)
         const int32_t eased_progress = ease_in_out_cubic(local_progress);
 
         set_tile_number(clicked_tile, s_wp7.page, s_wp7.settings_tile_index);
-        render_clicked_tile_scale(clicked_tile, eased_progress, false);
+        render_clicked_tile_fade(clicked_tile, eased_progress, false);
         return;
     }
 
@@ -879,7 +873,7 @@ static void render_settings_close_transition(int32_t progress)
     const int32_t clicked_phase_start = title_phase_start + WP7_SETTINGS_TITLE_PHASE_UNIT;
     const int32_t other_phase_start = clicked_phase_start + WP7_SETTINGS_TILE_PHASE_UNIT;
     const int32_t max_progress = transition_progress_max_for_dir(WP7_DIR_SETTINGS_CLOSE);
-    const bool restore_from_right = tile_col(s_wp7.settings_tile_index) == 0;
+    const bool grow_to_right = tile_col(s_wp7.settings_tile_index) != 0;
 
     progress = clamp_i32(progress, 0, max_progress);
     hide_status_bar();
@@ -913,7 +907,7 @@ static void render_settings_close_transition(int32_t progress)
         const int32_t eased_progress = ease_in_out_cubic(local_progress);
 
         set_tile_number(clicked_tile, s_wp7.page, s_wp7.settings_tile_index);
-        render_clicked_tile_scale(clicked_tile, eased_progress, true);
+        render_clicked_tile_fade(clicked_tile, eased_progress, true);
         return;
     }
 
@@ -934,7 +928,7 @@ static void render_settings_close_transition(int32_t progress)
         const int32_t local_progress = step_progress(progress, reverse_order);
         const int32_t eased_progress = ease_in_out_cubic(local_progress);
 
-        render_tile_restore(&s_wp7.tiles[index], eased_progress, restore_from_right);
+        render_tile_restore(&s_wp7.tiles[index], eased_progress, grow_to_right);
     }
 }
 
