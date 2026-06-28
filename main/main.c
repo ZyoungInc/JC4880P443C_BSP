@@ -28,13 +28,20 @@
 #define WP7_DRAG_DISTANCE_PERMILLE   550
 #define WP7_DRAG_THRESHOLD_PERMILLE  20
 #define WP7_RELEASE_COMMIT_PERMILLE  220
-#define WP7_BASE_PROGRESS_PER_MS     12
-#define WP7_BASE_RELEASE_MIN_MS      360
+#define WP7_BASE_PROGRESS_PER_MS     8
+#define WP7_BASE_RELEASE_MIN_MS      620
+#define WP7_SETTINGS_TILE_PHASE_UNIT (WP7_TILE_PROGRESS_UNIT * 2)
+#define WP7_SETTINGS_TITLE_PHASE_UNIT (WP7_TILE_PROGRESS_UNIT * 3 / 2)
 #define WP7_SETTINGS_TILE_INDEX      5
 #define WP7_SETTINGS_CONTENT_COUNT   3
 #define WP7_ANIM_SPEED_MIN           50
 #define WP7_ANIM_SPEED_DEFAULT       100
-#define WP7_ANIM_SPEED_MAX           160
+#define WP7_ANIM_SPEED_MAX           125
+#define WP7_ACTUAL_SPEED_MIN_PERMILLE 280
+#define WP7_ACTUAL_SPEED_DEFAULT_PERMILLE 1000
+#define WP7_ACTUAL_SPEED_MAX_PERMILLE 1150
+#define WP7_HORIZONTAL_SPEED_PERMILLE 820
+#define WP7_SETTINGS_SPEED_PERMILLE 760
 #define WP7_NVS_NAMESPACE            "wp7_ui"
 #define WP7_NVS_SPEED_KEY            "anim_spd"
 
@@ -157,14 +164,14 @@ static int32_t transition_progress_max_for_dir(wp7_page_dir_t dir)
 {
     if (dir == WP7_DIR_SETTINGS_OPEN) {
         return staggered_phase_max(settings_other_tile_count()) +
-               WP7_TILE_PROGRESS_UNIT +
+               WP7_SETTINGS_TILE_PHASE_UNIT +
                staggered_phase_max(WP7_SETTINGS_CONTENT_COUNT + 1);
     }
 
     if (dir == WP7_DIR_SETTINGS_CLOSE) {
         return staggered_phase_max(WP7_SETTINGS_CONTENT_COUNT) +
-               WP7_TILE_PROGRESS_UNIT +
-               WP7_TILE_PROGRESS_UNIT +
+               WP7_SETTINGS_TITLE_PHASE_UNIT +
+               WP7_SETTINGS_TILE_PHASE_UNIT +
                staggered_phase_max(settings_other_tile_count());
     }
 
@@ -199,18 +206,63 @@ static int32_t sanitize_animation_speed(int32_t speed)
     return clamp_i32(speed, WP7_ANIM_SPEED_MIN, WP7_ANIM_SPEED_MAX);
 }
 
-static int32_t animation_progress_per_ms(void)
+static int32_t animation_speed_permille(void)
 {
-    const int32_t progress_per_ms = WP7_BASE_PROGRESS_PER_MS * sanitize_animation_speed(s_wp7.anim_speed_percent) /
-                                    WP7_ANIM_SPEED_DEFAULT;
+    const int32_t speed = sanitize_animation_speed(s_wp7.anim_speed_percent);
+
+    if (speed <= WP7_ANIM_SPEED_DEFAULT) {
+        return WP7_ACTUAL_SPEED_MIN_PERMILLE +
+               (speed - WP7_ANIM_SPEED_MIN) *
+               (WP7_ACTUAL_SPEED_DEFAULT_PERMILLE - WP7_ACTUAL_SPEED_MIN_PERMILLE) /
+               (WP7_ANIM_SPEED_DEFAULT - WP7_ANIM_SPEED_MIN);
+    }
+
+    return WP7_ACTUAL_SPEED_DEFAULT_PERMILLE +
+           (speed - WP7_ANIM_SPEED_DEFAULT) *
+           (WP7_ACTUAL_SPEED_MAX_PERMILLE - WP7_ACTUAL_SPEED_DEFAULT_PERMILLE) /
+           (WP7_ANIM_SPEED_MAX - WP7_ANIM_SPEED_DEFAULT);
+}
+
+static int32_t animation_dir_permille(wp7_page_dir_t dir)
+{
+    if (is_horizontal_dir(dir)) {
+        return WP7_HORIZONTAL_SPEED_PERMILLE;
+    }
+
+    if (dir == WP7_DIR_SETTINGS_OPEN || dir == WP7_DIR_SETTINGS_CLOSE) {
+        return WP7_SETTINGS_SPEED_PERMILLE;
+    }
+
+    return 1000;
+}
+
+static int32_t animation_progress_per_ms(wp7_page_dir_t dir)
+{
+    const int64_t scaled_progress = (int64_t)WP7_BASE_PROGRESS_PER_MS *
+                                    animation_speed_permille() *
+                                    animation_dir_permille(dir);
+    const int32_t progress_per_ms = (int32_t)((scaled_progress + 500000) / 1000000);
 
     return progress_per_ms > 0 ? progress_per_ms : 1;
 }
 
-static int32_t animation_release_min_ms(void)
+static int32_t animation_duration_ms(wp7_page_dir_t dir, int32_t progress_delta)
 {
-    return WP7_BASE_RELEASE_MIN_MS * WP7_ANIM_SPEED_DEFAULT /
-           sanitize_animation_speed(s_wp7.anim_speed_percent);
+    const int64_t scaled_progress = (int64_t)WP7_BASE_PROGRESS_PER_MS *
+                                    animation_speed_permille() *
+                                    animation_dir_permille(dir);
+    const int64_t scaled_delta = (int64_t)progress_delta * 1000000;
+
+    return (int32_t)((scaled_delta + scaled_progress - 1) / scaled_progress);
+}
+
+static int32_t animation_release_min_ms(wp7_page_dir_t dir)
+{
+    const int64_t scaled_speed = (int64_t)animation_speed_permille() *
+                                 animation_dir_permille(dir);
+    const int64_t scaled_duration = (int64_t)WP7_BASE_RELEASE_MIN_MS * 1000000;
+
+    return (int32_t)((scaled_duration + scaled_speed - 1) / scaled_speed);
 }
 
 static bool animation_speed_is_default(void)
@@ -490,6 +542,13 @@ static int32_t step_progress(int32_t progress, int32_t order)
     return clamp_i32(progress - order * WP7_TILE_STAGGER_UNIT, 0, WP7_TILE_PROGRESS_UNIT);
 }
 
+static int32_t phase_progress(int32_t progress, int32_t phase_unit)
+{
+    progress = clamp_i32(progress, 0, phase_unit);
+
+    return (int32_t)((int64_t)progress * WP7_TILE_PROGRESS_UNIT / phase_unit);
+}
+
 static int32_t ease_in_out_cubic(int32_t progress)
 {
     progress = clamp_i32(progress, 0, WP7_TILE_PROGRESS_UNIT);
@@ -767,7 +826,7 @@ static void render_settings_open_transition(int32_t progress)
     const int32_t other_count = settings_other_tile_count();
     const int32_t other_phase = staggered_phase_max(other_count);
     const int32_t clicked_phase_start = other_phase;
-    const int32_t content_phase_start = clicked_phase_start + WP7_TILE_PROGRESS_UNIT;
+    const int32_t content_phase_start = clicked_phase_start + WP7_SETTINGS_TILE_PHASE_UNIT;
     const int32_t max_progress = transition_progress_max_for_dir(WP7_DIR_SETTINGS_OPEN);
     const bool collapse_right = tile_col(s_wp7.settings_tile_index) == 0;
 
@@ -799,7 +858,8 @@ static void render_settings_open_transition(int32_t progress)
         hide_tiles();
 
         wp7_tile_t *clicked_tile = &s_wp7.tiles[s_wp7.settings_tile_index];
-        const int32_t local_progress = clamp_i32(progress - clicked_phase_start, 0, WP7_TILE_PROGRESS_UNIT);
+        const int32_t local_progress = phase_progress(progress - clicked_phase_start,
+                                                     WP7_SETTINGS_TILE_PHASE_UNIT);
         const int32_t eased_progress = ease_in_out_cubic(local_progress);
 
         set_tile_number(clicked_tile, s_wp7.page, s_wp7.settings_tile_index);
@@ -816,8 +876,8 @@ static void render_settings_close_transition(int32_t progress)
     const int32_t other_count = settings_other_tile_count();
     const int32_t content_phase = staggered_phase_max(WP7_SETTINGS_CONTENT_COUNT);
     const int32_t title_phase_start = content_phase;
-    const int32_t clicked_phase_start = title_phase_start + WP7_TILE_PROGRESS_UNIT;
-    const int32_t other_phase_start = clicked_phase_start + WP7_TILE_PROGRESS_UNIT;
+    const int32_t clicked_phase_start = title_phase_start + WP7_SETTINGS_TITLE_PHASE_UNIT;
+    const int32_t other_phase_start = clicked_phase_start + WP7_SETTINGS_TILE_PHASE_UNIT;
     const int32_t max_progress = transition_progress_max_for_dir(WP7_DIR_SETTINGS_CLOSE);
     const bool restore_from_right = tile_col(s_wp7.settings_tile_index) == 0;
 
@@ -838,7 +898,8 @@ static void render_settings_close_transition(int32_t progress)
             lv_obj_add_flag(s_wp7.settings_items[i].obj, LV_OBJ_FLAG_HIDDEN);
         }
 
-        render_settings_title_out(clamp_i32(progress - title_phase_start, 0, WP7_TILE_PROGRESS_UNIT));
+        render_settings_title_out(phase_progress(progress - title_phase_start,
+                                  WP7_SETTINGS_TITLE_PHASE_UNIT));
         return;
     }
 
@@ -847,7 +908,8 @@ static void render_settings_close_transition(int32_t progress)
         hide_tiles();
 
         wp7_tile_t *clicked_tile = &s_wp7.tiles[s_wp7.settings_tile_index];
-        const int32_t local_progress = clamp_i32(progress - clicked_phase_start, 0, WP7_TILE_PROGRESS_UNIT);
+        const int32_t local_progress = phase_progress(progress - clicked_phase_start,
+                                                     WP7_SETTINGS_TILE_PHASE_UNIT);
         const int32_t eased_progress = ease_in_out_cubic(local_progress);
 
         set_tile_number(clicked_tile, s_wp7.page, s_wp7.settings_tile_index);
@@ -954,14 +1016,15 @@ static void start_progress_anim(wp7_page_dir_t dir, int32_t start, int32_t end, 
     lv_anim_set_var(&anim, &s_wp7);
     lv_anim_set_exec_cb(&anim, transition_anim_cb);
     lv_anim_set_values(&anim, start, end);
-    int32_t duration = (end > start ? end - start : start - end) / animation_progress_per_ms();
-    const int32_t release_min_ms = animation_release_min_ms();
+    const int32_t progress_delta = end > start ? end - start : start - end;
+    int32_t duration = animation_duration_ms(dir, progress_delta);
+    const int32_t release_min_ms = animation_release_min_ms(dir);
 
     if (duration < release_min_ms) {
         duration = release_min_ms;
     }
     lv_anim_set_duration(&anim, duration);
-    lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+    lv_anim_set_path_cb(&anim, lv_anim_path_linear);
     lv_anim_set_completed_cb(&anim, transition_anim_completed_cb);
     lv_anim_start(&anim);
 }
@@ -970,7 +1033,8 @@ static int32_t limit_drag_progress(int32_t target_progress)
 {
     const uint32_t tick = lv_tick_get();
     const uint32_t elapsed = tick - s_wp7.drag_last_tick;
-    int32_t max_step = (int32_t)(elapsed > 0 ? elapsed : 1) * animation_progress_per_ms();
+    int32_t max_step = (int32_t)(elapsed > 0 ? elapsed : 1) *
+                       animation_progress_per_ms(s_wp7.drag_dir);
 
     s_wp7.drag_last_tick = tick;
 
