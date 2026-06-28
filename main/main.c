@@ -14,9 +14,12 @@
 #define WP7_COLUMNS                  2
 #define WP7_MAX_ROWS                 4
 #define WP7_MAX_TILES                (WP7_COLUMNS * WP7_MAX_ROWS)
+#define WP7_MAX_LIST_ITEMS           WP7_MAX_TILES
 #define WP7_STATUS_BAR_PERMILLE      50
 #define WP7_SCREEN_PAD_PERMILLE      34
 #define WP7_TILE_GAP_PERMILLE        34
+#define WP7_LIST_ROW_H_PERMILLE      78
+#define WP7_LIST_ROW_GAP_PERMILLE    18
 #define WP7_TILE_PROGRESS_UNIT       1000
 #define WP7_TILE_STAGGER_UNIT        (WP7_TILE_PROGRESS_UNIT / 2)
 #define WP7_DRAG_DISTANCE_PERMILLE   550
@@ -33,18 +36,33 @@ typedef struct {
     int32_t size;
 } wp7_tile_t;
 
+typedef struct {
+    lv_obj_t *obj;
+    lv_obj_t *label;
+    int32_t x;
+    int32_t y;
+    int32_t w;
+    int32_t h;
+} wp7_list_item_t;
+
 typedef enum {
     WP7_DIR_NONE,
     WP7_DIR_NEXT,
     WP7_DIR_PREV,
+    WP7_DIR_LIST,
+    WP7_DIR_HOME,
 } wp7_page_dir_t;
 
 typedef struct {
     wp7_tile_t tiles[WP7_MAX_TILES];
+    wp7_list_item_t list_items[WP7_MAX_LIST_ITEMS];
     int32_t tile_count;
+    int32_t list_count;
+    int32_t screen_w;
     int32_t screen_h;
     int32_t page;
     int32_t target_page;
+    int32_t drag_start_x;
     int32_t drag_start_y;
     int32_t drag_progress;
     int32_t drag_target_progress;
@@ -52,6 +70,7 @@ typedef struct {
     bool drag_active;
     bool animating;
     bool commit_transition;
+    bool in_list;
     wp7_page_dir_t drag_dir;
     wp7_page_dir_t anim_dir;
 } wp7_screen_t;
@@ -77,17 +96,46 @@ static int32_t clamp_i32(int32_t value, int32_t min, int32_t max)
     return value;
 }
 
+static int32_t abs_i32(int32_t value)
+{
+    return value < 0 ? -value : value;
+}
+
+static bool is_horizontal_dir(wp7_page_dir_t dir)
+{
+    return dir == WP7_DIR_LIST || dir == WP7_DIR_HOME;
+}
+
+static int32_t transition_item_count(void)
+{
+    if (is_horizontal_dir(s_wp7.drag_dir)) {
+        return s_wp7.tile_count;
+    }
+
+    if (is_horizontal_dir(s_wp7.anim_dir)) {
+        return s_wp7.tile_count;
+    }
+
+    return s_wp7.tile_count;
+}
+
 static int32_t transition_progress_max(void)
 {
-    if (s_wp7.tile_count <= 0) {
+    const int32_t item_count = transition_item_count();
+
+    if (item_count <= 0) {
         return 0;
     }
 
-    return (((s_wp7.tile_count - 1) * WP7_TILE_STAGGER_UNIT) + WP7_TILE_PROGRESS_UNIT) * 2;
+    return (((item_count - 1) * WP7_TILE_STAGGER_UNIT) + WP7_TILE_PROGRESS_UNIT) * 2;
 }
 
 static int32_t transition_drag_distance(void)
 {
+    if (is_horizontal_dir(s_wp7.drag_dir)) {
+        return scaled_px(s_wp7.screen_w, WP7_DRAG_DISTANCE_PERMILLE);
+    }
+
     return scaled_px(s_wp7.screen_h, WP7_DRAG_DISTANCE_PERMILLE);
 }
 
@@ -115,9 +163,60 @@ static void set_tile_geometry(wp7_tile_t *tile, int32_t y, int32_t height)
     lv_obj_center(tile->label);
 }
 
+static void set_tile_x(wp7_tile_t *tile, int32_t x)
+{
+    if (x <= -tile->size || x >= s_wp7.screen_w) {
+        lv_obj_add_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_obj_remove_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(tile->obj, x, tile->y);
+    lv_obj_set_size(tile->obj, tile->size, tile->size);
+    lv_obj_center(tile->label);
+}
+
+static void set_list_item_geometry(wp7_list_item_t *item, int32_t x)
+{
+    if (x <= -item->w || x >= s_wp7.screen_w) {
+        lv_obj_add_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_obj_remove_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(item->obj, x, item->y);
+    lv_obj_set_size(item->obj, item->w, item->h);
+    lv_obj_align(item->label, LV_ALIGN_LEFT_MID, scaled_px(s_wp7.screen_w, 28), 0);
+}
+
+static void hide_tiles(void)
+{
+    for (int32_t i = 0; i < s_wp7.tile_count; i++) {
+        lv_obj_add_flag(s_wp7.tiles[i].obj, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void hide_list_items(void)
+{
+    for (int32_t i = 0; i < s_wp7.list_count; i++) {
+        lv_obj_add_flag(s_wp7.list_items[i].obj, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static int32_t ordered_out_index(wp7_page_dir_t dir, int32_t index)
 {
     return dir == WP7_DIR_PREV ? s_wp7.tile_count - 1 - index : index;
+}
+
+static int32_t ordered_column_index(int32_t order)
+{
+    const int32_t rows = s_wp7.tile_count / WP7_COLUMNS;
+
+    if (order < rows) {
+        return order * WP7_COLUMNS;
+    }
+
+    return (order - rows) * WP7_COLUMNS + 1;
 }
 
 static int32_t step_progress(int32_t progress, int32_t order)
@@ -143,6 +242,8 @@ static int32_t ease_in_out_cubic(int32_t progress)
 
 static void render_static_page(int32_t page)
 {
+    hide_list_items();
+
     for (int32_t i = 0; i < s_wp7.tile_count; i++) {
         wp7_tile_t *tile = &s_wp7.tiles[i];
 
@@ -151,11 +252,21 @@ static void render_static_page(int32_t page)
     }
 }
 
-static void render_transition(wp7_page_dir_t dir, int32_t progress)
+static void render_static_list(void)
+{
+    hide_tiles();
+
+    for (int32_t i = 0; i < s_wp7.list_count; i++) {
+        set_list_item_geometry(&s_wp7.list_items[i], s_wp7.list_items[i].x);
+    }
+}
+
+static void render_vertical_transition(wp7_page_dir_t dir, int32_t progress)
 {
     const int32_t out_phase_end = transition_progress_max() / 2;
     const int32_t max_progress = transition_progress_max();
 
+    hide_list_items();
     progress = clamp_i32(progress, 0, max_progress);
 
     if (progress < out_phase_end) {
@@ -188,6 +299,80 @@ static void render_transition(wp7_page_dir_t dir, int32_t progress)
     }
 }
 
+static void render_horizontal_transition(wp7_page_dir_t dir, int32_t progress)
+{
+    const int32_t out_phase_end = transition_progress_max() / 2;
+    const int32_t max_progress = transition_progress_max();
+
+    progress = clamp_i32(progress, 0, max_progress);
+
+    if (progress < out_phase_end) {
+        if (dir == WP7_DIR_LIST) {
+            hide_list_items();
+        } else {
+            hide_tiles();
+        }
+
+        for (int32_t order = 0; order < s_wp7.tile_count; order++) {
+            const int32_t index = ordered_column_index(order);
+            const int32_t local_progress = step_progress(progress, order);
+            const int32_t eased_progress = ease_in_out_cubic(local_progress);
+
+            if (dir == WP7_DIR_LIST) {
+                wp7_tile_t *tile = &s_wp7.tiles[index];
+                const int32_t x = tile->x - ((tile->x + tile->size) * eased_progress / WP7_TILE_PROGRESS_UNIT);
+
+                set_tile_number(tile, s_wp7.page, index);
+                set_tile_x(tile, x);
+            } else {
+                wp7_list_item_t *item = &s_wp7.list_items[order];
+                const int32_t x = item->x + ((s_wp7.screen_w - item->x) * eased_progress / WP7_TILE_PROGRESS_UNIT);
+
+                set_list_item_geometry(item, x);
+            }
+        }
+
+        return;
+    }
+
+    progress -= out_phase_end;
+
+    if (dir == WP7_DIR_LIST) {
+        hide_tiles();
+    } else {
+        hide_list_items();
+    }
+
+    for (int32_t order = 0; order < s_wp7.tile_count; order++) {
+        const int32_t index = ordered_column_index(order);
+        const int32_t local_progress = step_progress(progress, order);
+        const int32_t eased_progress = ease_in_out_cubic(local_progress);
+
+        if (dir == WP7_DIR_LIST) {
+            wp7_list_item_t *item = &s_wp7.list_items[order];
+            const int32_t x = s_wp7.screen_w - ((s_wp7.screen_w - item->x) * eased_progress / WP7_TILE_PROGRESS_UNIT);
+
+            set_list_item_geometry(item, x);
+        } else {
+            wp7_tile_t *tile = &s_wp7.tiles[index];
+            const int32_t x = -tile->size + ((tile->x + tile->size) * eased_progress / WP7_TILE_PROGRESS_UNIT);
+
+            set_tile_number(tile, s_wp7.page, index);
+            set_tile_x(tile, x);
+        }
+    }
+}
+
+static void render_transition(wp7_page_dir_t dir, int32_t progress)
+{
+    if (is_horizontal_dir(dir)) {
+        render_horizontal_transition(dir, progress);
+        return;
+    }
+
+    render_vertical_transition(dir, progress);
+}
+
 static void transition_anim_cb(void *var, int32_t progress)
 {
     (void)var;
@@ -199,10 +384,21 @@ static void transition_anim_completed_cb(lv_anim_t *anim)
     (void)anim;
 
     if (s_wp7.commit_transition) {
-        s_wp7.page = s_wp7.target_page;
+        if (s_wp7.anim_dir == WP7_DIR_LIST) {
+            s_wp7.in_list = true;
+        } else if (s_wp7.anim_dir == WP7_DIR_HOME) {
+            s_wp7.in_list = false;
+        } else {
+            s_wp7.page = s_wp7.target_page;
+        }
     }
 
-    render_static_page(s_wp7.page);
+    if (s_wp7.in_list) {
+        render_static_list();
+    } else {
+        render_static_page(s_wp7.page);
+    }
+
     s_wp7.animating = false;
     s_wp7.commit_transition = false;
     s_wp7.anim_dir = WP7_DIR_NONE;
@@ -258,18 +454,24 @@ static int32_t limit_drag_progress(int32_t target_progress)
     return target_progress;
 }
 
-static void update_drag_progress(int32_t y)
+static void update_drag_progress(int32_t x, int32_t y)
 {
+    const int32_t delta_x = x - s_wp7.drag_start_x;
     const int32_t delta_y = y - s_wp7.drag_start_y;
     const int32_t threshold = transition_drag_threshold();
-    const int32_t distance = transition_drag_distance();
-    const int32_t max_progress = transition_progress_max();
 
     if (s_wp7.drag_dir == WP7_DIR_NONE) {
-        if (delta_y < -threshold) {
+        const int32_t abs_x = abs_i32(delta_x);
+        const int32_t abs_y = abs_i32(delta_y);
+
+        if (abs_x > threshold && abs_x > abs_y && !s_wp7.in_list && delta_x < -threshold) {
+            s_wp7.drag_dir = WP7_DIR_LIST;
+        } else if (abs_x > threshold && abs_x > abs_y && s_wp7.in_list && delta_x > threshold) {
+            s_wp7.drag_dir = WP7_DIR_HOME;
+        } else if (abs_y > threshold && abs_y >= abs_x && !s_wp7.in_list && delta_y < -threshold) {
             s_wp7.drag_dir = WP7_DIR_NEXT;
             s_wp7.target_page = s_wp7.page + 1;
-        } else if (delta_y > threshold && s_wp7.page > 0) {
+        } else if (abs_y > threshold && abs_y >= abs_x && !s_wp7.in_list && delta_y > threshold && s_wp7.page > 0) {
             s_wp7.drag_dir = WP7_DIR_PREV;
             s_wp7.target_page = s_wp7.page - 1;
         } else {
@@ -277,7 +479,20 @@ static void update_drag_progress(int32_t y)
         }
     }
 
-    const int32_t drag_distance = s_wp7.drag_dir == WP7_DIR_NEXT ? -delta_y : delta_y;
+    const int32_t distance = transition_drag_distance();
+    const int32_t max_progress = transition_progress_max();
+    int32_t drag_distance = 0;
+
+    if (s_wp7.drag_dir == WP7_DIR_LIST) {
+        drag_distance = -delta_x;
+    } else if (s_wp7.drag_dir == WP7_DIR_HOME) {
+        drag_distance = delta_x;
+    } else if (s_wp7.drag_dir == WP7_DIR_NEXT) {
+        drag_distance = -delta_y;
+    } else if (s_wp7.drag_dir == WP7_DIR_PREV) {
+        drag_distance = delta_y;
+    }
+
     const int32_t progress = clamp_i32(drag_distance * max_progress / distance, 0, max_progress);
 
     s_wp7.drag_target_progress = progress;
@@ -317,6 +532,7 @@ static void screen_touch_cb(lv_event_t *event)
         }
 
         lv_indev_get_point(indev, &point);
+        s_wp7.drag_start_x = point.x;
         s_wp7.drag_start_y = point.y;
         s_wp7.drag_progress = 0;
         s_wp7.drag_target_progress = 0;
@@ -329,7 +545,7 @@ static void screen_touch_cb(lv_event_t *event)
         }
 
         lv_indev_get_point(indev, &point);
-        update_drag_progress(point.y);
+        update_drag_progress(point.x, point.y);
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         finish_drag();
     }
@@ -415,6 +631,60 @@ static void create_tile_grid(lv_obj_t *screen, int32_t screen_w, int32_t screen_
     }
 }
 
+static void create_list_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_h, int32_t status_h)
+{
+    static const char * const item_labels[] = {
+        "People",
+        "Messages",
+        "Photos",
+        "Calendar",
+        "Music",
+        "Settings",
+        "Store",
+        "Office",
+    };
+    const int32_t pad = scaled_px(screen_w, WP7_SCREEN_PAD_PERMILLE);
+    const int32_t gap = scaled_px(screen_h, WP7_LIST_ROW_GAP_PERMILLE);
+    const int32_t row_h = scaled_px(screen_h, WP7_LIST_ROW_H_PERMILLE);
+    const int32_t content_top = status_h + pad;
+    const int32_t row_w = screen_w - pad * 2;
+
+    s_wp7.list_count = s_wp7.tile_count;
+
+    if (s_wp7.list_count > WP7_MAX_LIST_ITEMS) {
+        s_wp7.list_count = WP7_MAX_LIST_ITEMS;
+    }
+
+    for (int32_t i = 0; i < s_wp7.list_count; i++) {
+        lv_obj_t *item_obj = lv_obj_create(screen);
+        lv_obj_remove_style_all(item_obj);
+        lv_obj_set_size(item_obj, row_w, row_h);
+        lv_obj_set_pos(item_obj, pad, content_top + i * (row_h + gap));
+        lv_obj_set_style_bg_color(item_obj, lv_color_hex(0x111820), 0);
+        lv_obj_set_style_bg_opa(item_obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(item_obj, 0, 0);
+        lv_obj_remove_flag(item_obj, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(item_obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+
+        lv_obj_t *label = lv_label_create(item_obj);
+        lv_label_set_text(label, item_labels[i % (sizeof(item_labels) / sizeof(item_labels[0]))]);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xEAF7FF), 0);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
+        lv_obj_align(label, LV_ALIGN_LEFT_MID, scaled_px(screen_w, 28), 0);
+        lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+
+        wp7_list_item_t *item_data = &s_wp7.list_items[i];
+        item_data->obj = item_obj;
+        item_data->label = label;
+        item_data->x = pad;
+        item_data->y = content_top + i * (row_h + gap);
+        item_data->w = row_w;
+        item_data->h = row_h;
+
+        lv_obj_add_flag(item_obj, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void create_wp7_first_screen(void)
 {
     lv_obj_t *screen = lv_screen_active();
@@ -437,11 +707,14 @@ static void create_wp7_first_screen(void)
     s_wp7 = (wp7_screen_t) {
         .page = 0,
         .target_page = 0,
+        .screen_w = screen_w,
         .screen_h = screen_h,
     };
 
     create_status_bar(screen, screen_w, status_h, pad);
     create_tile_grid(screen, screen_w, screen_h, status_h);
+    create_list_page(screen, screen_w, screen_h, status_h);
+    render_static_page(0);
 }
 
 void app_main(void)
