@@ -17,12 +17,13 @@
 #define WP7_STATUS_BAR_PERMILLE      50
 #define WP7_SCREEN_PAD_PERMILLE      34
 #define WP7_TILE_GAP_PERMILLE        34
-#define WP7_TILE_ANIM_MS             90
 #define WP7_TILE_PROGRESS_UNIT       1000
 #define WP7_TILE_STAGGER_UNIT        (WP7_TILE_PROGRESS_UNIT / 2)
 #define WP7_DRAG_DISTANCE_PERMILLE   550
 #define WP7_DRAG_THRESHOLD_PERMILLE  20
 #define WP7_RELEASE_COMMIT_PERMILLE  220
+#define WP7_MAX_PROGRESS_PER_MS      24
+#define WP7_RELEASE_MIN_MS           220
 
 typedef struct {
     lv_obj_t *obj;
@@ -46,6 +47,8 @@ typedef struct {
     int32_t target_page;
     int32_t drag_start_y;
     int32_t drag_progress;
+    int32_t drag_target_progress;
+    uint32_t drag_last_tick;
     bool drag_active;
     bool animating;
     bool commit_transition;
@@ -187,6 +190,7 @@ static void transition_anim_completed_cb(lv_anim_t *anim)
     s_wp7.anim_dir = WP7_DIR_NONE;
     s_wp7.drag_dir = WP7_DIR_NONE;
     s_wp7.drag_progress = 0;
+    s_wp7.drag_target_progress = 0;
 }
 
 static void start_progress_anim(wp7_page_dir_t dir, int32_t start, int32_t end, bool commit)
@@ -207,14 +211,33 @@ static void start_progress_anim(wp7_page_dir_t dir, int32_t start, int32_t end, 
     lv_anim_set_var(&anim, &s_wp7);
     lv_anim_set_exec_cb(&anim, transition_anim_cb);
     lv_anim_set_values(&anim, start, end);
-    int32_t duration = (end > start ? end - start : start - end) * WP7_TILE_ANIM_MS / WP7_TILE_PROGRESS_UNIT;
-    if (duration < WP7_TILE_ANIM_MS) {
-        duration = WP7_TILE_ANIM_MS;
+    int32_t duration = (end > start ? end - start : start - end) / WP7_MAX_PROGRESS_PER_MS;
+    if (duration < WP7_RELEASE_MIN_MS) {
+        duration = WP7_RELEASE_MIN_MS;
     }
     lv_anim_set_duration(&anim, duration);
     lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
     lv_anim_set_completed_cb(&anim, transition_anim_completed_cb);
     lv_anim_start(&anim);
+}
+
+static int32_t limit_drag_progress(int32_t target_progress)
+{
+    const uint32_t tick = lv_tick_get();
+    const uint32_t elapsed = tick - s_wp7.drag_last_tick;
+    int32_t max_step = (int32_t)(elapsed > 0 ? elapsed : 1) * WP7_MAX_PROGRESS_PER_MS;
+
+    s_wp7.drag_last_tick = tick;
+
+    if (target_progress > s_wp7.drag_progress + max_step) {
+        return s_wp7.drag_progress + max_step;
+    }
+
+    if (target_progress < s_wp7.drag_progress - max_step) {
+        return s_wp7.drag_progress - max_step;
+    }
+
+    return target_progress;
 }
 
 static void update_drag_progress(int32_t y)
@@ -239,8 +262,9 @@ static void update_drag_progress(int32_t y)
     const int32_t drag_distance = s_wp7.drag_dir == WP7_DIR_NEXT ? -delta_y : delta_y;
     const int32_t progress = clamp_i32(drag_distance * max_progress / distance, 0, max_progress);
 
-    s_wp7.drag_progress = progress;
-    render_transition(s_wp7.drag_dir, progress);
+    s_wp7.drag_target_progress = progress;
+    s_wp7.drag_progress = limit_drag_progress(progress);
+    render_transition(s_wp7.drag_dir, s_wp7.drag_progress);
 }
 
 static void finish_drag(void)
@@ -252,7 +276,7 @@ static void finish_drag(void)
 
     const int32_t max_progress = transition_progress_max();
     const int32_t commit_progress = max_progress * WP7_RELEASE_COMMIT_PERMILLE / 1000;
-    const bool commit = s_wp7.drag_progress >= commit_progress;
+    const bool commit = s_wp7.drag_target_progress >= commit_progress;
     const int32_t end = commit ? max_progress : 0;
 
     s_wp7.drag_active = false;
@@ -277,6 +301,8 @@ static void screen_touch_cb(lv_event_t *event)
         lv_indev_get_point(indev, &point);
         s_wp7.drag_start_y = point.y;
         s_wp7.drag_progress = 0;
+        s_wp7.drag_target_progress = 0;
+        s_wp7.drag_last_tick = lv_tick_get();
         s_wp7.drag_dir = WP7_DIR_NONE;
         s_wp7.drag_active = true;
     } else if (code == LV_EVENT_PRESSING) {
