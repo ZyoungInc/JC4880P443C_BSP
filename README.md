@@ -76,9 +76,33 @@ After reconfiguration, the ESP-IDF component list uses the local
 ## Current App Entry
 
 `main/main.c` currently initializes the codec, starts the BSP display with the
-custom LVGL config, turns on the backlight, and runs the selected LVGL demo.
+custom LVGL config, turns on the backlight, and runs the WP7-style launcher UI.
 
 ## Build Note
 
 `idf.py reconfigure` has passed with ESP-IDF 5.5.4 after localizing the touch
 and audio codec driver components. A full build was intentionally not run.
+
+## Changelog
+
+### 2026-06-29
+
+- Replaced the LVGL demo entry screen with a Windows Phone 7 style launcher:
+  two-column tile grid, centered time/status bar, right-side app list, and a
+  dedicated `UI Settings` tile.
+- Added WP7-style page transitions for vertical page flips, horizontal
+  launcher/list movement, and opening/closing the settings page.
+- Added persisted UI settings through NVS:
+  brightness, dark mode, theme color, animation speed, and fast animations.
+- Added WP7 theme color swatches, dark/light styling, animated slider and
+  switch controls, and a reset button for animation speed.
+- Optimized settings/list page ownership so pages are created and destroyed
+  around transition phases instead of keeping every page active.
+- Added interruptible launcher/list/page swipe animations: an in-flight
+  transition can now be touched and dragged from its current progress.
+- Removed the blocking tile press-release wait before drag transitions, so tile
+  press state no longer causes a short pause before swipe/open animations.
+- Tuned press feedback for tiles and the reset button, including smaller press
+  shrink and animation-speed-aware release timing.
+- Updated `sdkconfig` for the current UI build by enabling
+  `CONFIG_LV_FONT_MONTSERRAT_34` and disabling LVGL sysmon/perf monitor output.

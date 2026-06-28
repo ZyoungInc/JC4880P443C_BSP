@@ -53,6 +53,13 @@
 #define WP7_THEME_SWATCH_ANIM_MS     180
 #define WP7_THEME_SWATCH_SELECTED_PERMILLE 1000
 #define WP7_THEME_SWATCH_IDLE_PERMILLE 900
+#define WP7_SWITCH_VALUE_MAX         100
+#define WP7_SWITCH_THRESHOLD         50
+#define WP7_PRESS_ANIM_MS            110
+#define WP7_OBJ_PRESS_SCALE          250
+#define WP7_OBJ_RELEASE_SCALE        256
+#define WP7_KNOB_PRESS_EXTEND        4
+#define WP7_KNOB_RELEASE_EXTEND      0
 #define WP7_NVS_NAMESPACE            "wp7_ui"
 #define WP7_NVS_SPEED_KEY            "anim_spd"
 #define WP7_NVS_BRIGHTNESS_KEY       "bright"
@@ -66,6 +73,20 @@ typedef struct {
     int32_t x;
     int32_t y;
     int32_t size;
+    int32_t label_page;
+    int32_t label_index;
+    int32_t current_x;
+    int32_t current_y;
+    int32_t current_w;
+    int32_t current_h;
+    int32_t current_scale;
+    lv_opa_t current_opa;
+    bool hidden;
+    bool frame_valid;
+    bool style_valid;
+    bool press_active;
+    bool press_animating;
+    bool press_releasing;
 } wp7_tile_t;
 
 typedef struct {
@@ -77,6 +98,9 @@ typedef struct {
     int32_t y;
     int32_t w;
     int32_t h;
+    int32_t current_x;
+    bool hidden;
+    bool frame_valid;
 } wp7_list_item_t;
 
 typedef struct {
@@ -85,6 +109,11 @@ typedef struct {
     int32_t y;
     int32_t w;
     int32_t h;
+    int32_t current_x;
+    lv_opa_t current_opa;
+    bool hidden;
+    bool frame_valid;
+    bool style_valid;
 } wp7_setting_item_t;
 
 typedef enum {
@@ -98,18 +127,18 @@ typedef enum {
 } wp7_page_dir_t;
 
 typedef enum {
-    WP7_SETTINGS_ITEM_MODE_LABEL,
-    WP7_SETTINGS_ITEM_MODE_SWITCH,
     WP7_SETTINGS_ITEM_BRIGHTNESS_LABEL,
     WP7_SETTINGS_ITEM_BRIGHTNESS_SLIDER,
+    WP7_SETTINGS_ITEM_MODE_LABEL,
+    WP7_SETTINGS_ITEM_MODE_SWITCH,
     WP7_SETTINGS_ITEM_THEME_LABEL,
     WP7_SETTINGS_ITEM_THEME_ROW_0,
     WP7_SETTINGS_ITEM_THEME_ROW_1,
     WP7_SETTINGS_ITEM_SPEED_LABEL,
     WP7_SETTINGS_ITEM_SPEED_SLIDER,
+    WP7_SETTINGS_ITEM_RESET_BUTTON,
     WP7_SETTINGS_ITEM_FAST_LABEL,
     WP7_SETTINGS_ITEM_FAST_SWITCH,
-    WP7_SETTINGS_ITEM_RESET_BUTTON,
 } wp7_setting_item_index_t;
 
 typedef struct {
@@ -138,22 +167,46 @@ typedef struct {
     int32_t settings_title_y;
     int32_t settings_title_w;
     int32_t settings_title_h;
+    int32_t settings_title_current_x;
+    int32_t settings_title_current_scale;
+    lv_opa_t settings_title_current_opa;
+    uint32_t settings_title_current_text_hex;
     int32_t settings_tile_index;
     int32_t anim_speed_percent;
     int32_t brightness_percent;
+    int32_t brightness_hw_percent;
     int32_t theme_index;
     int32_t theme_swatch_cell_size;
     uint32_t theme_anim_from_hex;
     uint32_t theme_anim_to_hex;
+    uint32_t theme_anim_from_text_hex;
+    uint32_t theme_anim_to_text_hex;
     int32_t theme_anim_progress;
+    uint32_t ui_anim_from_bg_hex;
+    uint32_t ui_anim_to_bg_hex;
+    uint32_t ui_anim_from_text_hex;
+    uint32_t ui_anim_to_text_hex;
+    uint32_t ui_anim_from_track_hex;
+    uint32_t ui_anim_to_track_hex;
+    uint32_t ui_anim_from_disabled_bg_hex;
+    uint32_t ui_anim_to_disabled_bg_hex;
+    int32_t ui_anim_progress;
+    int32_t control_press_x;
+    int32_t control_press_y;
+    int32_t brightness_slider_press_value;
+    int32_t settings_slider_press_value;
     int32_t page;
     int32_t target_page;
     int32_t drag_start_x;
     int32_t drag_start_y;
     int32_t drag_progress;
     int32_t drag_target_progress;
+    int32_t drag_base_progress;
+    int32_t anim_progress;
     uint32_t drag_last_tick;
     bool drag_active;
+    bool drag_interrupted_anim;
+    bool drag_interrupted_commit;
     bool animating;
     bool commit_transition;
     bool in_list;
@@ -161,6 +214,17 @@ typedef struct {
     bool dark_mode;
     bool fast_animations;
     bool theme_animating;
+    bool ui_animating;
+    bool brightness_slider_tap_pending;
+    bool brightness_slider_tap_animating;
+    bool settings_slider_tap_pending;
+    bool mode_switch_press_checked;
+    bool mode_switch_tap_pending;
+    bool fast_switch_press_checked;
+    bool fast_switch_tap_pending;
+    bool settings_title_hidden;
+    bool settings_title_frame_valid;
+    bool settings_title_style_valid;
     wp7_page_dir_t drag_dir;
     wp7_page_dir_t anim_dir;
 } wp7_screen_t;
@@ -170,6 +234,10 @@ static wp7_screen_t s_wp7;
 static void create_list_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_h, int32_t status_h);
 static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_h, int32_t status_h);
 static int32_t animation_progress_per_ms(wp7_page_dir_t dir);
+static void set_wp7_switch_style(lv_obj_t *sw, bool checked);
+static void update_wp7_switch_accent(lv_obj_t *sw);
+static void set_reset_button_press_scale(int32_t scale);
+static void release_tile_press_for_drag(void);
 
 static const uint32_t s_wp7_theme_colors[WP7_THEME_COLOR_COUNT] = {
     0xFF0097,
@@ -227,6 +295,12 @@ static bool is_horizontal_dir(wp7_page_dir_t dir)
     return dir == WP7_DIR_LIST || dir == WP7_DIR_HOME;
 }
 
+static bool is_swipe_transition_dir(wp7_page_dir_t dir)
+{
+    return dir == WP7_DIR_NEXT || dir == WP7_DIR_PREV ||
+           dir == WP7_DIR_LIST || dir == WP7_DIR_HOME;
+}
+
 static int32_t settings_other_tile_count(void)
 {
     return s_wp7.tile_count > 0 ? s_wp7.tile_count - 1 : 0;
@@ -274,6 +348,27 @@ static int32_t transition_drag_distance(void)
     }
 
     return scaled_px(s_wp7.screen_h, WP7_DRAG_DISTANCE_PERMILLE);
+}
+
+static int32_t transition_drag_delta(wp7_page_dir_t dir, int32_t delta_x, int32_t delta_y)
+{
+    if (dir == WP7_DIR_LIST) {
+        return -delta_x;
+    }
+
+    if (dir == WP7_DIR_HOME) {
+        return delta_x;
+    }
+
+    if (dir == WP7_DIR_NEXT) {
+        return -delta_y;
+    }
+
+    if (dir == WP7_DIR_PREV) {
+        return delta_y;
+    }
+
+    return 0;
 }
 
 static int32_t transition_drag_threshold(void)
@@ -334,35 +429,114 @@ static lv_color_t theme_color(void)
     return lv_color_hex(theme_color_hex());
 }
 
-static lv_color_t theme_text_color(void)
+static uint32_t theme_text_color_hex_for_color(uint32_t color)
 {
-    const uint32_t color = theme_color_hex();
     const int32_t red = (color >> 16) & 0xFF;
     const int32_t green = (color >> 8) & 0xFF;
     const int32_t blue = color & 0xFF;
     const int32_t luma = red * 299 + green * 587 + blue * 114;
 
-    return luma > 145000 ? lv_color_hex(0x06324A) : lv_color_hex(0xFFFFFF);
+    return luma > 145000 ? 0x06324A : 0xFFFFFF;
+}
+
+static uint32_t theme_text_color_hex(void)
+{
+    if (s_wp7.theme_animating) {
+        return blend_color_hex(s_wp7.theme_anim_from_text_hex,
+                               s_wp7.theme_anim_to_text_hex,
+                               s_wp7.theme_anim_progress);
+    }
+
+    return theme_text_color_hex_for_color(theme_color_hex());
+}
+
+static lv_color_t theme_text_color(void)
+{
+    return lv_color_hex(theme_text_color_hex());
+}
+
+static uint32_t raw_ui_bg_color_hex(bool dark_mode)
+{
+    return dark_mode ? 0x000000 : 0xF2F2F2;
+}
+
+static uint32_t raw_ui_text_color_hex(bool dark_mode)
+{
+    return dark_mode ? 0xEAF7FF : 0x111111;
+}
+
+static uint32_t raw_ui_track_color_hex(bool dark_mode)
+{
+    return dark_mode ? 0x2D2D2D : 0xD8D8D8;
+}
+
+static uint32_t raw_ui_disabled_bg_color_hex(bool dark_mode)
+{
+    return dark_mode ? 0x2C2C2C : 0xC8C8C8;
+}
+
+static uint32_t ui_bg_color_hex(void)
+{
+    if (s_wp7.ui_animating) {
+        return blend_color_hex(s_wp7.ui_anim_from_bg_hex,
+                               s_wp7.ui_anim_to_bg_hex,
+                               s_wp7.ui_anim_progress);
+    }
+
+    return raw_ui_bg_color_hex(s_wp7.dark_mode);
+}
+
+static uint32_t ui_text_color_hex(void)
+{
+    if (s_wp7.ui_animating) {
+        return blend_color_hex(s_wp7.ui_anim_from_text_hex,
+                               s_wp7.ui_anim_to_text_hex,
+                               s_wp7.ui_anim_progress);
+    }
+
+    return raw_ui_text_color_hex(s_wp7.dark_mode);
 }
 
 static lv_color_t ui_bg_color(void)
 {
-    return s_wp7.dark_mode ? lv_color_black() : lv_color_hex(0xF2F2F2);
+    return lv_color_hex(ui_bg_color_hex());
 }
 
 static lv_color_t ui_text_color(void)
 {
-    return s_wp7.dark_mode ? lv_color_hex(0xEAF7FF) : lv_color_hex(0x111111);
+    return lv_color_hex(ui_text_color_hex());
+}
+
+static uint32_t ui_track_color_hex(void)
+{
+    if (s_wp7.ui_animating) {
+        return blend_color_hex(s_wp7.ui_anim_from_track_hex,
+                               s_wp7.ui_anim_to_track_hex,
+                               s_wp7.ui_anim_progress);
+    }
+
+    return raw_ui_track_color_hex(s_wp7.dark_mode);
 }
 
 static lv_color_t ui_track_color(void)
 {
-    return s_wp7.dark_mode ? lv_color_hex(0x2D2D2D) : lv_color_hex(0xD8D8D8);
+    return lv_color_hex(ui_track_color_hex());
+}
+
+static uint32_t ui_disabled_bg_color_hex(void)
+{
+    if (s_wp7.ui_animating) {
+        return blend_color_hex(s_wp7.ui_anim_from_disabled_bg_hex,
+                               s_wp7.ui_anim_to_disabled_bg_hex,
+                               s_wp7.ui_anim_progress);
+    }
+
+    return raw_ui_disabled_bg_color_hex(s_wp7.dark_mode);
 }
 
 static lv_color_t ui_disabled_bg_color(void)
 {
-    return s_wp7.dark_mode ? lv_color_hex(0x2C2C2C) : lv_color_hex(0xC8C8C8);
+    return lv_color_hex(ui_disabled_bg_color_hex());
 }
 
 static lv_color_t ui_disabled_text_color(void)
@@ -539,8 +713,230 @@ static void save_fast_animations(void)
     save_u16_setting(WP7_NVS_FAST_KEY, s_wp7.fast_animations ? 1 : 0);
 }
 
+static int32_t current_knob_extend(lv_obj_t *slider)
+{
+    return lv_obj_get_style_transform_width(slider, LV_PART_KNOB);
+}
+
+static void knob_extend_anim_cb(void *slider, int32_t extend)
+{
+    lv_obj_set_style_transform_width((lv_obj_t *)slider, extend, LV_PART_KNOB);
+    lv_obj_set_style_transform_height((lv_obj_t *)slider, extend, LV_PART_KNOB);
+}
+
+static void start_knob_extend_anim(lv_obj_t *slider, int32_t target_extend)
+{
+    if (slider == NULL) {
+        return;
+    }
+
+    lv_anim_del(slider, knob_extend_anim_cb);
+
+    lv_anim_t anim;
+
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, slider);
+    lv_anim_set_exec_cb(&anim, knob_extend_anim_cb);
+    lv_anim_set_values(&anim, current_knob_extend(slider), target_extend);
+    lv_anim_set_duration(&anim, scaled_ui_anim_ms(WP7_PRESS_ANIM_MS));
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+    lv_anim_start(&anim);
+}
+
+static void set_control_anim_duration(lv_obj_t *obj)
+{
+    if (obj != NULL) {
+        lv_obj_set_style_anim_duration(obj, scaled_ui_anim_ms(WP7_PRESS_ANIM_MS),
+                                       LV_PART_MAIN);
+    }
+}
+
+static void store_control_press_point(void)
+{
+    lv_indev_t *indev = lv_indev_active();
+    lv_point_t point;
+
+    if (indev == NULL) {
+        s_wp7.control_press_x = 0;
+        s_wp7.control_press_y = 0;
+        return;
+    }
+
+    lv_indev_get_point(indev, &point);
+    s_wp7.control_press_x = point.x;
+    s_wp7.control_press_y = point.y;
+}
+
+static bool control_moved_past_tap_threshold(void)
+{
+    lv_indev_t *indev = lv_indev_active();
+    lv_point_t point;
+
+    if (indev == NULL) {
+        return false;
+    }
+
+    lv_indev_get_point(indev, &point);
+
+    const int32_t threshold = scaled_px(s_wp7.screen_w, 18);
+
+    return abs_i32(point.x - s_wp7.control_press_x) > threshold ||
+           abs_i32(point.y - s_wp7.control_press_y) > threshold;
+}
+
+static int32_t slider_value_from_active_point(lv_obj_t *slider)
+{
+    lv_indev_t *indev = lv_indev_active();
+    lv_point_t point;
+    lv_area_t coords;
+
+    if (indev == NULL || slider == NULL) {
+        return slider != NULL ? lv_slider_get_value(slider) : 0;
+    }
+
+    lv_indev_get_point(indev, &point);
+    lv_obj_get_coords(slider, &coords);
+
+    const int32_t min = lv_slider_get_min_value(slider);
+    const int32_t max = lv_slider_get_max_value(slider);
+    const int32_t pad_left = lv_obj_get_style_pad_left(slider, LV_PART_MAIN);
+    const int32_t pad_right = lv_obj_get_style_pad_right(slider, LV_PART_MAIN);
+    const int32_t left = coords.x1 + pad_left;
+    const int32_t right = coords.x2 - pad_right;
+    const int32_t width = right - left;
+
+    if (width <= 0 || max <= min) {
+        return lv_slider_get_value(slider);
+    }
+
+    const int32_t x = clamp_i32(point.x, left, right) - left;
+
+    return min + (int32_t)(((int64_t)x * (max - min) + width / 2) / width);
+}
+
+static void animate_slider_to_value(lv_obj_t *slider, int32_t value)
+{
+    if (slider == NULL) {
+        return;
+    }
+
+    set_control_anim_duration(slider);
+    lv_slider_set_value(slider, value, LV_ANIM_ON);
+}
+
+static void brightness_anim_cb(void *var, int32_t value)
+{
+    (void)var;
+
+    s_wp7.brightness_hw_percent = sanitize_brightness(value);
+    bsp_display_brightness_set(s_wp7.brightness_hw_percent);
+}
+
+static void set_brightness_immediate(int32_t value)
+{
+    value = sanitize_brightness(value);
+
+    lv_anim_del(&s_wp7, brightness_anim_cb);
+    s_wp7.brightness_percent = value;
+    s_wp7.brightness_hw_percent = value;
+    bsp_display_brightness_set(value);
+}
+
+static void animate_brightness_to(int32_t target)
+{
+    target = sanitize_brightness(target);
+
+    lv_anim_del(&s_wp7, brightness_anim_cb);
+    s_wp7.brightness_percent = target;
+
+    if (s_wp7.brightness_hw_percent <= 0) {
+        s_wp7.brightness_hw_percent = sanitize_brightness(s_wp7.brightness_percent);
+    }
+
+    if (s_wp7.brightness_hw_percent == target) {
+        bsp_display_brightness_set(target);
+        return;
+    }
+
+    lv_anim_t anim;
+
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, &s_wp7);
+    lv_anim_set_exec_cb(&anim, brightness_anim_cb);
+    lv_anim_set_values(&anim, s_wp7.brightness_hw_percent, target);
+    lv_anim_set_duration(&anim, scaled_ui_anim_ms(WP7_PRESS_ANIM_MS));
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+    lv_anim_start(&anim);
+}
+
+static bool wp7_switch_value_checked(lv_obj_t *sw)
+{
+    return sw != NULL && lv_slider_get_value(sw) >= WP7_SWITCH_THRESHOLD;
+}
+
+static void set_wp7_switch_value(lv_obj_t *sw, bool checked, lv_anim_enable_t anim)
+{
+    if (sw == NULL) {
+        return;
+    }
+
+    set_control_anim_duration(sw);
+    lv_slider_set_value(sw, checked ? WP7_SWITCH_VALUE_MAX : 0, anim);
+}
+
+static void set_wp7_switch_style(lv_obj_t *sw, bool checked)
+{
+    if (sw == NULL) {
+        return;
+    }
+
+    if (lv_obj_has_state(sw, LV_STATE_CHECKED) != checked) {
+        if (checked) {
+            lv_obj_add_state(sw, LV_STATE_CHECKED);
+        } else {
+            lv_obj_remove_state(sw, LV_STATE_CHECKED);
+        }
+    }
+
+    lv_obj_set_style_bg_color(sw, ui_track_color(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sw, theme_color(), LV_PART_MAIN | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, theme_color(),
+                              LV_PART_MAIN | LV_STATE_CHECKED | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(sw, ui_track_color(), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sw, ui_track_color(), LV_PART_INDICATOR | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(sw, theme_color(), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, theme_color(),
+                              LV_PART_INDICATOR | LV_STATE_CHECKED | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(sw, ui_text_color(), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(sw, ui_text_color(), LV_PART_KNOB | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(sw, ui_text_color(), LV_PART_KNOB | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, ui_text_color(),
+                              LV_PART_KNOB | LV_STATE_CHECKED | LV_STATE_PRESSED);
+}
+
+static void update_wp7_switch_accent(lv_obj_t *sw)
+{
+    if (sw == NULL || !lv_obj_has_state(sw, LV_STATE_CHECKED)) {
+        return;
+    }
+
+    lv_obj_set_style_bg_color(sw, theme_color(), LV_PART_MAIN | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, theme_color(),
+                              LV_PART_MAIN | LV_STATE_CHECKED | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(sw, theme_color(), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, theme_color(),
+                              LV_PART_INDICATOR | LV_STATE_CHECKED | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(sw, ui_text_color(), LV_PART_KNOB | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, ui_text_color(),
+                              LV_PART_KNOB | LV_STATE_CHECKED | LV_STATE_PRESSED);
+}
+
 static void set_tile_number(wp7_tile_t *tile, int32_t page, int32_t index)
 {
+    if (tile->label_page == page && tile->label_index == index) {
+        return;
+    }
+
     if (page == 0 && index == WP7_SETTINGS_TILE_INDEX) {
         lv_label_set_text(tile->label, "UI\nSettings");
     } else {
@@ -550,6 +946,76 @@ static void set_tile_number(wp7_tile_t *tile, int32_t page, int32_t index)
     lv_obj_set_style_text_color(tile->label, theme_text_color(), 0);
     lv_obj_set_style_text_align(tile->label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(tile->label);
+    tile->label_page = page;
+    tile->label_index = index;
+}
+
+static void set_tile_hidden(wp7_tile_t *tile, bool hidden)
+{
+    if (tile->hidden == hidden) {
+        return;
+    }
+
+    if (hidden) {
+        lv_obj_add_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    tile->hidden = hidden;
+}
+
+static void set_tile_visual_style(wp7_tile_t *tile, lv_opa_t opa, int32_t scale)
+{
+    if (tile->style_valid && tile->current_opa == opa && tile->current_scale == scale) {
+        return;
+    }
+
+    lv_obj_set_style_opa(tile->obj, opa, 0);
+    lv_obj_set_style_transform_scale(tile->obj, scale, 0);
+    tile->current_opa = opa;
+    tile->current_scale = scale;
+    tile->style_valid = true;
+}
+
+static void set_tile_frame(wp7_tile_t *tile, int32_t x, int32_t y, int32_t w, int32_t h)
+{
+    const bool frame_same = tile->frame_valid &&
+                            tile->current_x == x &&
+                            tile->current_y == y &&
+                            tile->current_w == w &&
+                            tile->current_h == h;
+
+    if (frame_same) {
+        return;
+    }
+
+    lv_obj_set_pos(tile->obj, x, y);
+    lv_obj_set_size(tile->obj, w, h);
+    lv_obj_center(tile->label);
+
+    tile->current_x = x;
+    tile->current_y = y;
+    tile->current_w = w;
+    tile->current_h = h;
+    tile->frame_valid = true;
+}
+
+static bool tile_release_anim_holds_full_frame(wp7_tile_t *tile,
+                                               int32_t x,
+                                               int32_t y,
+                                               int32_t w,
+                                               int32_t h,
+                                               lv_opa_t opa)
+{
+    return tile->press_animating &&
+           tile->press_releasing &&
+           tile->current_w < tile->size &&
+           x == tile->x &&
+           y == tile->y &&
+           w == tile->size &&
+           h == tile->size &&
+           opa == LV_OPA_COVER;
 }
 
 static void apply_theme_to_tiles(void)
@@ -560,6 +1026,14 @@ static void apply_theme_to_tiles(void)
         }
 
         lv_obj_set_style_bg_color(s_wp7.tiles[i].obj, theme_color(), 0);
+        lv_obj_set_style_bg_color(s_wp7.tiles[i].obj, theme_color(), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(s_wp7.tiles[i].obj, theme_color(), LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_color(s_wp7.tiles[i].obj, theme_color(),
+                                  LV_STATE_PRESSED | LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_opa(s_wp7.tiles[i].obj, LV_OPA_COVER, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(s_wp7.tiles[i].obj, LV_OPA_COVER, LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_opa(s_wp7.tiles[i].obj, LV_OPA_COVER,
+                                LV_STATE_PRESSED | LV_STATE_FOCUSED);
 
         if (s_wp7.tiles[i].label != NULL) {
             lv_obj_set_style_text_color(s_wp7.tiles[i].label, theme_text_color(), 0);
@@ -610,6 +1084,7 @@ static void apply_color_scheme(void)
 
     if (s_wp7.settings_title != NULL) {
         lv_obj_set_style_text_color(s_wp7.settings_title, ui_text_color(), 0);
+        s_wp7.settings_title_current_text_hex = ui_text_color_hex();
     }
 
     for (int32_t i = 0; i < WP7_SETTINGS_CONTENT_COUNT; i++) {
@@ -628,37 +1103,8 @@ static void apply_color_scheme(void)
         lv_obj_set_style_bg_color(s_wp7.settings_slider, ui_text_color(), LV_PART_KNOB);
     }
 
-    if (s_wp7.mode_switch != NULL) {
-        if (s_wp7.dark_mode) {
-            lv_obj_add_state(s_wp7.mode_switch, LV_STATE_CHECKED);
-        } else {
-            lv_obj_remove_state(s_wp7.mode_switch, LV_STATE_CHECKED);
-        }
-
-        lv_obj_set_style_bg_color(s_wp7.mode_switch, ui_track_color(), LV_PART_MAIN);
-        lv_obj_set_style_bg_color(s_wp7.mode_switch, theme_color(), LV_PART_INDICATOR);
-        lv_obj_set_style_bg_color(s_wp7.mode_switch, theme_color(),
-                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_set_style_bg_color(s_wp7.mode_switch, ui_text_color(), LV_PART_KNOB);
-        lv_obj_set_style_bg_color(s_wp7.mode_switch, theme_text_color(),
-                                  LV_PART_KNOB | LV_STATE_CHECKED);
-    }
-
-    if (s_wp7.fast_switch != NULL) {
-        if (s_wp7.fast_animations) {
-            lv_obj_add_state(s_wp7.fast_switch, LV_STATE_CHECKED);
-        } else {
-            lv_obj_remove_state(s_wp7.fast_switch, LV_STATE_CHECKED);
-        }
-
-        lv_obj_set_style_bg_color(s_wp7.fast_switch, ui_track_color(), LV_PART_MAIN);
-        lv_obj_set_style_bg_color(s_wp7.fast_switch, theme_color(), LV_PART_INDICATOR);
-        lv_obj_set_style_bg_color(s_wp7.fast_switch, theme_color(),
-                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_set_style_bg_color(s_wp7.fast_switch, ui_text_color(), LV_PART_KNOB);
-        lv_obj_set_style_bg_color(s_wp7.fast_switch, theme_text_color(),
-                                  LV_PART_KNOB | LV_STATE_CHECKED);
-    }
+    set_wp7_switch_style(s_wp7.mode_switch, s_wp7.dark_mode);
+    set_wp7_switch_style(s_wp7.fast_switch, s_wp7.fast_animations);
 
     if (s_wp7.mode_label != NULL) {
         lv_obj_set_style_text_color(s_wp7.mode_label, ui_text_color(), 0);
@@ -668,61 +1114,68 @@ static void apply_color_scheme(void)
 static void set_tile_geometry(wp7_tile_t *tile, int32_t y, int32_t height)
 {
     if (height <= 0) {
-        lv_obj_add_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+        set_tile_hidden(tile, true);
         return;
     }
 
-    lv_obj_remove_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_opa(tile->obj, LV_OPA_COVER, 0);
-    lv_obj_set_style_transform_scale(tile->obj, 256, 0);
-    lv_obj_set_pos(tile->obj, tile->x, y);
-    lv_obj_set_size(tile->obj, tile->size, height);
-    lv_obj_center(tile->label);
+    if (tile_release_anim_holds_full_frame(tile, tile->x, y, tile->size,
+                                           height, LV_OPA_COVER)) {
+        return;
+    }
+
+    set_tile_hidden(tile, false);
+    set_tile_visual_style(tile, LV_OPA_COVER, 256);
+    set_tile_frame(tile, tile->x, y, tile->size, height);
 }
 
 static void set_tile_x(wp7_tile_t *tile, int32_t x)
 {
     if (x <= -tile->size || x >= s_wp7.screen_w) {
-        lv_obj_add_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+        set_tile_hidden(tile, true);
         return;
     }
 
-    lv_obj_remove_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_opa(tile->obj, LV_OPA_COVER, 0);
-    lv_obj_set_style_transform_scale(tile->obj, 256, 0);
-    lv_obj_set_pos(tile->obj, x, tile->y);
-    lv_obj_set_size(tile->obj, tile->size, tile->size);
-    lv_obj_center(tile->label);
+    if (tile_release_anim_holds_full_frame(tile, x, tile->y, tile->size,
+                                           tile->size, LV_OPA_COVER)) {
+        return;
+    }
+
+    set_tile_hidden(tile, false);
+    set_tile_visual_style(tile, LV_OPA_COVER, 256);
+    set_tile_frame(tile, x, tile->y, tile->size, tile->size);
 }
 
 static void set_tile_width(wp7_tile_t *tile, int32_t width)
 {
     if (width <= 0) {
-        lv_obj_add_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+        set_tile_hidden(tile, true);
         return;
     }
 
-    lv_obj_remove_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_opa(tile->obj, LV_OPA_COVER, 0);
-    lv_obj_set_style_transform_scale(tile->obj, 256, 0);
-    lv_obj_set_pos(tile->obj, tile->x, tile->y);
-    lv_obj_set_size(tile->obj, width, tile->size);
-    lv_obj_center(tile->label);
+    if (tile_release_anim_holds_full_frame(tile, tile->x, tile->y, width,
+                                           tile->size, LV_OPA_COVER)) {
+        return;
+    }
+
+    set_tile_hidden(tile, false);
+    set_tile_visual_style(tile, LV_OPA_COVER, 256);
+    set_tile_frame(tile, tile->x, tile->y, width, tile->size);
 }
 
 static void set_tile_box(wp7_tile_t *tile, int32_t x, int32_t y, int32_t w, int32_t h, lv_opa_t opa)
 {
     if (w <= 0 || h <= 0 || opa == 0) {
-        lv_obj_add_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
+        set_tile_hidden(tile, true);
         return;
     }
 
-    lv_obj_remove_flag(tile->obj, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_opa(tile->obj, opa, 0);
-    lv_obj_set_style_transform_scale(tile->obj, 256, 0);
-    lv_obj_set_pos(tile->obj, x, y);
-    lv_obj_set_size(tile->obj, w, h);
-    lv_obj_center(tile->label);
+    if (tile_release_anim_holds_full_frame(tile, x, y, w, h, opa)) {
+        return;
+    }
+
+    set_tile_hidden(tile, false);
+    set_tile_visual_style(tile, opa, 256);
+    set_tile_frame(tile, x, y, w, h);
 }
 
 static void set_tile_zoom_box(wp7_tile_t *tile, int32_t scale, lv_opa_t opa)
@@ -736,14 +1189,34 @@ static void set_tile_zoom_box(wp7_tile_t *tile, int32_t scale, lv_opa_t opa)
 
 static void set_list_item_geometry(wp7_list_item_t *item, int32_t x)
 {
+    bool layout_changed = false;
+
     if (x <= -item->w || x >= s_wp7.screen_w) {
-        lv_obj_add_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
+        if (!item->hidden) {
+            lv_obj_add_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
+            item->hidden = true;
+        }
+
         return;
     }
 
-    lv_obj_remove_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_pos(item->obj, x, item->y);
-    lv_obj_set_size(item->obj, item->w, item->h);
+    if (item->hidden) {
+        lv_obj_remove_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
+        item->hidden = false;
+        layout_changed = true;
+    }
+
+    if (!item->frame_valid || item->current_x != x) {
+        lv_obj_set_pos(item->obj, x, item->y);
+        lv_obj_set_size(item->obj, item->w, item->h);
+        item->current_x = x;
+        item->frame_valid = true;
+        layout_changed = true;
+    }
+
+    if (!layout_changed) {
+        return;
+    }
 
     if (item->icon != NULL) {
         lv_obj_align(item->icon, LV_ALIGN_LEFT_MID, 0, 0);
@@ -758,28 +1231,67 @@ static void set_list_item_geometry(wp7_list_item_t *item, int32_t x)
 static void set_setting_item_geometry(wp7_setting_item_t *item, int32_t x, lv_opa_t opa)
 {
     if (x <= -item->w || x >= s_wp7.screen_w || opa == 0) {
-        lv_obj_add_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
+        if (!item->hidden) {
+            lv_obj_add_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
+            item->hidden = true;
+        }
+
         return;
     }
 
-    lv_obj_remove_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_opa(item->obj, opa, 0);
-    lv_obj_set_pos(item->obj, x, item->y);
-    lv_obj_set_size(item->obj, item->w, item->h);
+    if (item->hidden) {
+        lv_obj_remove_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
+        item->hidden = false;
+    }
+
+    if (!item->style_valid || item->current_opa != opa) {
+        lv_obj_set_style_opa(item->obj, opa, 0);
+        item->current_opa = opa;
+        item->style_valid = true;
+    }
+
+    if (!item->frame_valid || item->current_x != x) {
+        lv_obj_set_pos(item->obj, x, item->y);
+        lv_obj_set_size(item->obj, item->w, item->h);
+        item->current_x = x;
+        item->frame_valid = true;
+    }
 }
 
 static void set_settings_title_geometry(int32_t x, int32_t scale, lv_opa_t opa)
 {
     if (opa == 0 || scale <= 0) {
-        lv_obj_add_flag(s_wp7.settings_title, LV_OBJ_FLAG_HIDDEN);
+        if (!s_wp7.settings_title_hidden) {
+            lv_obj_add_flag(s_wp7.settings_title, LV_OBJ_FLAG_HIDDEN);
+            s_wp7.settings_title_hidden = true;
+        }
+
         return;
     }
 
-    lv_obj_remove_flag(s_wp7.settings_title, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_opa(s_wp7.settings_title, opa, 0);
-    lv_obj_set_style_transform_scale(s_wp7.settings_title, scale, 0);
-    lv_obj_set_pos(s_wp7.settings_title, x, s_wp7.settings_title_y);
-    lv_obj_set_size(s_wp7.settings_title, s_wp7.settings_title_w, s_wp7.settings_title_h);
+    if (s_wp7.settings_title_hidden) {
+        lv_obj_remove_flag(s_wp7.settings_title, LV_OBJ_FLAG_HIDDEN);
+        s_wp7.settings_title_hidden = false;
+    }
+
+    if (!s_wp7.settings_title_style_valid ||
+            s_wp7.settings_title_current_opa != opa ||
+            s_wp7.settings_title_current_scale != scale ||
+            s_wp7.settings_title_current_text_hex != ui_text_color_hex()) {
+        lv_obj_set_style_transform_scale(s_wp7.settings_title, scale, 0);
+        lv_obj_set_style_text_color(s_wp7.settings_title, ui_text_color(), 0);
+        s_wp7.settings_title_current_opa = opa;
+        s_wp7.settings_title_current_scale = scale;
+        s_wp7.settings_title_current_text_hex = ui_text_color_hex();
+        s_wp7.settings_title_style_valid = true;
+    }
+
+    if (!s_wp7.settings_title_frame_valid || s_wp7.settings_title_current_x != x) {
+        lv_obj_set_pos(s_wp7.settings_title, x, s_wp7.settings_title_y);
+        lv_obj_set_size(s_wp7.settings_title, s_wp7.settings_title_w, s_wp7.settings_title_h);
+        s_wp7.settings_title_current_x = x;
+        s_wp7.settings_title_frame_valid = true;
+    }
 }
 
 static void show_status_bar(void)
@@ -792,7 +1304,7 @@ static void show_status_bar(void)
 static void hide_tiles(void)
 {
     for (int32_t i = 0; i < s_wp7.tile_count; i++) {
-        lv_obj_add_flag(s_wp7.tiles[i].obj, LV_OBJ_FLAG_HIDDEN);
+        set_tile_hidden(&s_wp7.tiles[i], true);
     }
 }
 
@@ -800,7 +1312,10 @@ static void hide_list_items(void)
 {
     for (int32_t i = 0; i < s_wp7.list_count; i++) {
         if (s_wp7.list_items[i].obj != NULL) {
-            lv_obj_add_flag(s_wp7.list_items[i].obj, LV_OBJ_FLAG_HIDDEN);
+            if (!s_wp7.list_items[i].hidden) {
+                lv_obj_add_flag(s_wp7.list_items[i].obj, LV_OBJ_FLAG_HIDDEN);
+                s_wp7.list_items[i].hidden = true;
+            }
         }
     }
 }
@@ -808,15 +1323,37 @@ static void hide_list_items(void)
 static void hide_settings_items(void)
 {
     if (s_wp7.settings_title != NULL) {
-        lv_obj_add_flag(s_wp7.settings_title, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_transform_scale(s_wp7.settings_title, 256, 0);
-        lv_obj_set_style_opa(s_wp7.settings_title, LV_OPA_COVER, 0);
+        if (!s_wp7.settings_title_hidden) {
+            lv_obj_add_flag(s_wp7.settings_title, LV_OBJ_FLAG_HIDDEN);
+            s_wp7.settings_title_hidden = true;
+        }
+
+        if (!s_wp7.settings_title_style_valid ||
+                s_wp7.settings_title_current_scale != 256 ||
+                s_wp7.settings_title_current_opa != LV_OPA_COVER ||
+                s_wp7.settings_title_current_text_hex != ui_text_color_hex()) {
+            lv_obj_set_style_transform_scale(s_wp7.settings_title, 256, 0);
+            lv_obj_set_style_text_color(s_wp7.settings_title, ui_text_color(), 0);
+            s_wp7.settings_title_current_scale = 256;
+            s_wp7.settings_title_current_opa = LV_OPA_COVER;
+            s_wp7.settings_title_current_text_hex = ui_text_color_hex();
+            s_wp7.settings_title_style_valid = true;
+        }
     }
 
     for (int32_t i = 0; i < WP7_SETTINGS_CONTENT_COUNT; i++) {
         if (s_wp7.settings_items[i].obj != NULL) {
-            lv_obj_add_flag(s_wp7.settings_items[i].obj, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_opa(s_wp7.settings_items[i].obj, LV_OPA_COVER, 0);
+            if (!s_wp7.settings_items[i].hidden) {
+                lv_obj_add_flag(s_wp7.settings_items[i].obj, LV_OBJ_FLAG_HIDDEN);
+                s_wp7.settings_items[i].hidden = true;
+            }
+
+            if (!s_wp7.settings_items[i].style_valid ||
+                    s_wp7.settings_items[i].current_opa != LV_OPA_COVER) {
+                lv_obj_set_style_opa(s_wp7.settings_items[i].obj, LV_OPA_COVER, 0);
+                s_wp7.settings_items[i].current_opa = LV_OPA_COVER;
+                s_wp7.settings_items[i].style_valid = true;
+            }
         }
     }
 }
@@ -838,6 +1375,10 @@ static int32_t wp7_status_height(void)
 
 static void destroy_list_page(void)
 {
+    if (s_wp7.list_count <= 0) {
+        return;
+    }
+
     for (int32_t i = 0; i < s_wp7.list_count; i++) {
         if (s_wp7.list_items[i].obj != NULL) {
             lv_obj_delete(s_wp7.list_items[i].obj);
@@ -851,6 +1392,10 @@ static void destroy_list_page(void)
 
 static void destroy_settings_page(void)
 {
+    if (!settings_page_created()) {
+        return;
+    }
+
     if (s_wp7.settings_title != NULL) {
         lv_obj_delete(s_wp7.settings_title);
         s_wp7.settings_title = NULL;
@@ -872,6 +1417,13 @@ static void destroy_settings_page(void)
     s_wp7.settings_reset_button = NULL;
     s_wp7.settings_reset_label = NULL;
     s_wp7.theme_swatch_cell_size = 0;
+    s_wp7.settings_title_current_x = 0;
+    s_wp7.settings_title_current_scale = 0;
+    s_wp7.settings_title_current_opa = 0;
+    s_wp7.settings_title_current_text_hex = 0;
+    s_wp7.settings_title_hidden = false;
+    s_wp7.settings_title_frame_valid = false;
+    s_wp7.settings_title_style_valid = false;
 
     for (int32_t i = 0; i < WP7_THEME_ROW_COUNT; i++) {
         s_wp7.theme_rows[i] = NULL;
@@ -1024,11 +1576,35 @@ static void update_reset_button_state(void)
         lv_obj_add_state(s_wp7.settings_reset_button, LV_STATE_DISABLED);
         lv_obj_remove_flag(s_wp7.settings_reset_button, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_color(s_wp7.settings_reset_button, ui_disabled_bg_color(), 0);
+        lv_obj_set_style_bg_color(s_wp7.settings_reset_button,
+                                  ui_disabled_bg_color(), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(s_wp7.settings_reset_button,
+                                  ui_disabled_bg_color(), LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_color(s_wp7.settings_reset_button, ui_disabled_bg_color(),
+                                  LV_STATE_PRESSED | LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER,
+                                LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER,
+                                LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER,
+                                LV_STATE_PRESSED | LV_STATE_FOCUSED);
         lv_obj_set_style_text_color(s_wp7.settings_reset_label, ui_disabled_text_color(), 0);
     } else {
         lv_obj_remove_state(s_wp7.settings_reset_button, LV_STATE_DISABLED);
         lv_obj_add_flag(s_wp7.settings_reset_button, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_color(s_wp7.settings_reset_button, theme_color(), 0);
+        lv_obj_set_style_bg_color(s_wp7.settings_reset_button, theme_color(), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(s_wp7.settings_reset_button, theme_color(), LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_color(s_wp7.settings_reset_button, theme_color(),
+                                  LV_STATE_PRESSED | LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER,
+                                LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER,
+                                LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER,
+                                LV_STATE_PRESSED | LV_STATE_FOCUSED);
         lv_obj_set_style_text_color(s_wp7.settings_reset_label, theme_text_color(), 0);
     }
 }
@@ -1055,21 +1631,8 @@ static void update_theme_accent_controls(void)
         lv_obj_set_style_bg_color(s_wp7.settings_slider, theme_color(), LV_PART_INDICATOR);
     }
 
-    if (s_wp7.mode_switch != NULL) {
-        lv_obj_set_style_bg_color(s_wp7.mode_switch, theme_color(), LV_PART_INDICATOR);
-        lv_obj_set_style_bg_color(s_wp7.mode_switch, theme_color(),
-                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_set_style_bg_color(s_wp7.mode_switch, theme_text_color(),
-                                  LV_PART_KNOB | LV_STATE_CHECKED);
-    }
-
-    if (s_wp7.fast_switch != NULL) {
-        lv_obj_set_style_bg_color(s_wp7.fast_switch, theme_color(), LV_PART_INDICATOR);
-        lv_obj_set_style_bg_color(s_wp7.fast_switch, theme_color(),
-                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_set_style_bg_color(s_wp7.fast_switch, theme_text_color(),
-                                  LV_PART_KNOB | LV_STATE_CHECKED);
-    }
+    update_wp7_switch_accent(s_wp7.mode_switch);
+    update_wp7_switch_accent(s_wp7.fast_switch);
 
     update_reset_button_state();
 }
@@ -1080,6 +1643,12 @@ static void update_theme_controls(void)
 
     apply_theme_to_tiles();
     update_theme_buttons();
+    update_theme_accent_controls();
+}
+
+static void update_color_scheme_anim_controls(void)
+{
+    apply_color_scheme();
     update_theme_accent_controls();
 }
 
@@ -1101,14 +1670,20 @@ static void theme_color_anim_completed_cb(lv_anim_t *anim)
     save_theme();
 }
 
-static void start_theme_color_anim(uint32_t from_color, uint32_t to_color)
+static void start_theme_color_anim(uint32_t from_color,
+                                   uint32_t from_text_color,
+                                   uint32_t to_color,
+                                   uint32_t to_text_color)
 {
     lv_anim_del(&s_wp7, theme_color_anim_cb);
 
     s_wp7.theme_anim_from_hex = from_color;
     s_wp7.theme_anim_to_hex = to_color;
+    s_wp7.theme_anim_from_text_hex = from_text_color;
+    s_wp7.theme_anim_to_text_hex = to_text_color;
     s_wp7.theme_anim_progress = 0;
-    s_wp7.theme_animating = from_color != to_color;
+    s_wp7.theme_animating = from_color != to_color ||
+                             from_text_color != to_text_color;
 
     if (!s_wp7.theme_animating) {
         update_theme_controls();
@@ -1125,6 +1700,68 @@ static void start_theme_color_anim(uint32_t from_color, uint32_t to_color)
     lv_anim_set_duration(&anim, scaled_ui_anim_ms(WP7_THEME_COLOR_ANIM_MS));
     lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
     lv_anim_set_completed_cb(&anim, theme_color_anim_completed_cb);
+    lv_anim_start(&anim);
+}
+
+static void color_scheme_anim_cb(void *var, int32_t progress)
+{
+    (void)var;
+
+    s_wp7.ui_anim_progress = progress;
+    update_color_scheme_anim_controls();
+}
+
+static void color_scheme_anim_completed_cb(lv_anim_t *anim)
+{
+    (void)anim;
+
+    s_wp7.ui_animating = false;
+    s_wp7.ui_anim_progress = WP7_TILE_PROGRESS_UNIT;
+    update_color_scheme_anim_controls();
+}
+
+static void start_color_scheme_anim(bool dark_mode)
+{
+    const uint32_t from_bg = ui_bg_color_hex();
+    const uint32_t from_text = ui_text_color_hex();
+    const uint32_t from_track = ui_track_color_hex();
+    const uint32_t from_disabled_bg = ui_disabled_bg_color_hex();
+    const uint32_t to_bg = raw_ui_bg_color_hex(dark_mode);
+    const uint32_t to_text = raw_ui_text_color_hex(dark_mode);
+    const uint32_t to_track = raw_ui_track_color_hex(dark_mode);
+    const uint32_t to_disabled_bg = raw_ui_disabled_bg_color_hex(dark_mode);
+
+    lv_anim_del(&s_wp7, color_scheme_anim_cb);
+
+    s_wp7.dark_mode = dark_mode;
+    s_wp7.ui_anim_from_bg_hex = from_bg;
+    s_wp7.ui_anim_to_bg_hex = to_bg;
+    s_wp7.ui_anim_from_text_hex = from_text;
+    s_wp7.ui_anim_to_text_hex = to_text;
+    s_wp7.ui_anim_from_track_hex = from_track;
+    s_wp7.ui_anim_to_track_hex = to_track;
+    s_wp7.ui_anim_from_disabled_bg_hex = from_disabled_bg;
+    s_wp7.ui_anim_to_disabled_bg_hex = to_disabled_bg;
+    s_wp7.ui_anim_progress = 0;
+    s_wp7.ui_animating = from_bg != to_bg ||
+                          from_text != to_text ||
+                          from_track != to_track ||
+                          from_disabled_bg != to_disabled_bg;
+
+    if (!s_wp7.ui_animating) {
+        update_color_scheme_anim_controls();
+        return;
+    }
+
+    lv_anim_t anim;
+
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, &s_wp7);
+    lv_anim_set_exec_cb(&anim, color_scheme_anim_cb);
+    lv_anim_set_values(&anim, 0, WP7_TILE_PROGRESS_UNIT);
+    lv_anim_set_duration(&anim, scaled_ui_anim_ms(WP7_THEME_COLOR_ANIM_MS));
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+    lv_anim_set_completed_cb(&anim, color_scheme_anim_completed_cb);
     lv_anim_start(&anim);
 }
 
@@ -1185,6 +1822,16 @@ static void render_static_settings(void)
 
     if (s_wp7.settings_slider != NULL) {
         lv_slider_set_value(s_wp7.settings_slider, sanitize_animation_speed(s_wp7.anim_speed_percent), LV_ANIM_OFF);
+    }
+
+    if (s_wp7.mode_switch != NULL) {
+        set_wp7_switch_value(s_wp7.mode_switch, s_wp7.dark_mode, LV_ANIM_OFF);
+        set_wp7_switch_style(s_wp7.mode_switch, s_wp7.dark_mode);
+    }
+
+    if (s_wp7.fast_switch != NULL) {
+        set_wp7_switch_value(s_wp7.fast_switch, s_wp7.fast_animations, LV_ANIM_OFF);
+        set_wp7_switch_style(s_wp7.fast_switch, s_wp7.fast_animations);
     }
 
     set_settings_title_geometry(s_wp7.settings_title_x, 256, LV_OPA_COVER);
@@ -1372,7 +2019,7 @@ static void render_settings_content_in(int32_t progress)
     const int32_t title_scale = 384 - (128 * title_eased / WP7_TILE_PROGRESS_UNIT);
 
     set_settings_title_geometry(title_x, title_scale,
-                                (lv_opa_t)(LV_OPA_COVER * title_eased / WP7_TILE_PROGRESS_UNIT));
+                                title_local > 0 ? LV_OPA_COVER : 0);
 
     for (int32_t i = 0; i < WP7_SETTINGS_CONTENT_COUNT; i++) {
         wp7_setting_item_t *item = &s_wp7.settings_items[i];
@@ -1380,7 +2027,8 @@ static void render_settings_content_in(int32_t progress)
         const int32_t eased_progress = ease_in_out_cubic(local_progress);
         const int32_t x = -item->w + ((item->x + item->w) * eased_progress / WP7_TILE_PROGRESS_UNIT);
 
-        set_setting_item_geometry(item, x, (lv_opa_t)(LV_OPA_COVER * eased_progress / WP7_TILE_PROGRESS_UNIT));
+        set_setting_item_geometry(item, x, (lv_opa_t)(LV_OPA_COVER *
+                                  eased_progress / WP7_TILE_PROGRESS_UNIT));
     }
 }
 
@@ -1408,11 +2056,9 @@ static void render_settings_title_out(int32_t progress)
                             ((s_wp7.settings_title_x + s_wp7.settings_title_w) *
                              eased_progress / WP7_TILE_PROGRESS_UNIT);
     const int32_t scale = 256 + (128 * eased_progress / WP7_TILE_PROGRESS_UNIT);
-    const lv_opa_t opa = (lv_opa_t)(LV_OPA_COVER *
-                                    (WP7_TILE_PROGRESS_UNIT - eased_progress) /
-                                    WP7_TILE_PROGRESS_UNIT);
 
-    set_settings_title_geometry(title_x, scale, opa);
+    set_settings_title_geometry(title_x, scale,
+                                progress < WP7_TILE_PROGRESS_UNIT ? LV_OPA_COVER : 0);
 }
 
 static void render_settings_open_transition(int32_t progress)
@@ -1504,7 +2150,10 @@ static void render_settings_close_transition(int32_t progress)
 
         for (int32_t i = 0; i < WP7_SETTINGS_CONTENT_COUNT; i++) {
             if (s_wp7.settings_items[i].obj != NULL) {
-                lv_obj_add_flag(s_wp7.settings_items[i].obj, LV_OBJ_FLAG_HIDDEN);
+                if (!s_wp7.settings_items[i].hidden) {
+                    lv_obj_add_flag(s_wp7.settings_items[i].obj, LV_OBJ_FLAG_HIDDEN);
+                    s_wp7.settings_items[i].hidden = true;
+                }
             }
         }
 
@@ -1577,7 +2226,32 @@ static void render_transition(wp7_page_dir_t dir, int32_t progress)
 static void transition_anim_cb(void *var, int32_t progress)
 {
     (void)var;
+    s_wp7.anim_progress = progress;
     render_transition(s_wp7.anim_dir, progress);
+}
+
+static bool interrupt_transition_anim_for_drag(void)
+{
+    if (!s_wp7.animating || !is_swipe_transition_dir(s_wp7.anim_dir)) {
+        return false;
+    }
+
+    const wp7_page_dir_t dir = s_wp7.anim_dir;
+    const int32_t max_progress = transition_progress_max_for_dir(dir);
+    const int32_t progress = clamp_i32(s_wp7.anim_progress, 0, max_progress);
+    const bool commit = s_wp7.commit_transition;
+
+    lv_anim_del(&s_wp7, transition_anim_cb);
+    s_wp7.animating = false;
+    s_wp7.commit_transition = false;
+    s_wp7.anim_dir = WP7_DIR_NONE;
+    s_wp7.drag_dir = dir;
+    s_wp7.drag_progress = progress;
+    s_wp7.drag_target_progress = progress;
+    s_wp7.drag_base_progress = progress;
+    s_wp7.drag_interrupted_anim = true;
+    s_wp7.drag_interrupted_commit = commit;
+    return true;
 }
 
 static void transition_anim_completed_cb(lv_anim_t *anim)
@@ -1612,13 +2286,19 @@ static void transition_anim_completed_cb(lv_anim_t *anim)
     s_wp7.drag_dir = WP7_DIR_NONE;
     s_wp7.drag_progress = 0;
     s_wp7.drag_target_progress = 0;
+    s_wp7.drag_base_progress = 0;
+    s_wp7.anim_progress = 0;
+    s_wp7.drag_interrupted_anim = false;
+    s_wp7.drag_interrupted_commit = false;
 }
 
 static void start_progress_anim(wp7_page_dir_t dir, int32_t start, int32_t end, bool commit)
 {
+    lv_anim_del(&s_wp7, transition_anim_cb);
     s_wp7.animating = true;
     s_wp7.commit_transition = commit;
     s_wp7.anim_dir = dir;
+    s_wp7.anim_progress = start;
 
     if (start == end) {
         render_transition(dir, end);
@@ -1677,34 +2357,32 @@ static void update_drag_progress(int32_t x, int32_t y)
 
         if (abs_x > threshold && abs_x > abs_y && !s_wp7.in_list && delta_x < -threshold) {
             s_wp7.drag_dir = WP7_DIR_LIST;
+            s_wp7.drag_base_progress = 0;
         } else if (abs_x > threshold && abs_x > abs_y && s_wp7.in_list && delta_x > threshold) {
             s_wp7.drag_dir = WP7_DIR_HOME;
+            s_wp7.drag_base_progress = 0;
         } else if (abs_y > threshold && abs_y >= abs_x && !s_wp7.in_list && delta_y < -threshold) {
             s_wp7.drag_dir = WP7_DIR_NEXT;
             s_wp7.target_page = s_wp7.page + 1;
+            s_wp7.drag_base_progress = 0;
         } else if (abs_y > threshold && abs_y >= abs_x && !s_wp7.in_list && delta_y > threshold && s_wp7.page > 0) {
             s_wp7.drag_dir = WP7_DIR_PREV;
             s_wp7.target_page = s_wp7.page - 1;
+            s_wp7.drag_base_progress = 0;
         } else {
             return;
         }
     }
 
+    release_tile_press_for_drag();
+
     const int32_t distance = transition_drag_distance();
     const int32_t max_progress = transition_progress_max();
-    int32_t drag_distance = 0;
+    const int32_t drag_distance = transition_drag_delta(s_wp7.drag_dir, delta_x, delta_y);
 
-    if (s_wp7.drag_dir == WP7_DIR_LIST) {
-        drag_distance = -delta_x;
-    } else if (s_wp7.drag_dir == WP7_DIR_HOME) {
-        drag_distance = delta_x;
-    } else if (s_wp7.drag_dir == WP7_DIR_NEXT) {
-        drag_distance = -delta_y;
-    } else if (s_wp7.drag_dir == WP7_DIR_PREV) {
-        drag_distance = delta_y;
-    }
-
-    const int32_t progress = clamp_i32(drag_distance * max_progress / distance, 0, max_progress);
+    const int32_t progress = clamp_i32(s_wp7.drag_base_progress +
+                                       drag_distance * max_progress / distance,
+                                       0, max_progress);
 
     s_wp7.drag_target_progress = progress;
     s_wp7.drag_progress = limit_drag_progress(progress);
@@ -1715,16 +2393,135 @@ static void finish_drag(void)
 {
     if (!s_wp7.drag_active || s_wp7.drag_dir == WP7_DIR_NONE) {
         s_wp7.drag_active = false;
+        s_wp7.drag_base_progress = 0;
+        s_wp7.drag_interrupted_anim = false;
+        s_wp7.drag_interrupted_commit = false;
         return;
     }
 
     const int32_t max_progress = transition_progress_max();
     const int32_t commit_progress = max_progress * WP7_RELEASE_COMMIT_PERMILLE / 1000;
-    const bool commit = s_wp7.drag_target_progress >= commit_progress;
+    const bool untouched_interrupt = s_wp7.drag_interrupted_anim &&
+                                     s_wp7.drag_target_progress == s_wp7.drag_base_progress;
+    const bool commit = untouched_interrupt ?
+                        s_wp7.drag_interrupted_commit :
+                        s_wp7.drag_target_progress >= commit_progress;
     const int32_t end = commit ? max_progress : 0;
 
     s_wp7.drag_active = false;
+    s_wp7.drag_interrupted_anim = false;
+    s_wp7.drag_interrupted_commit = false;
     start_progress_anim(s_wp7.drag_dir, s_wp7.drag_progress, end, commit);
+}
+
+static int32_t tile_press_current_scale(wp7_tile_t *tile)
+{
+    if (tile == NULL || tile->size <= 0 || tile->current_w <= 0) {
+        return WP7_OBJ_RELEASE_SCALE;
+    }
+
+    return clamp_i32(tile->current_w * WP7_OBJ_RELEASE_SCALE / tile->size,
+                     WP7_OBJ_PRESS_SCALE, WP7_OBJ_RELEASE_SCALE);
+}
+
+static void set_tile_press_scale(wp7_tile_t *tile, int32_t scale)
+{
+    if (tile == NULL || tile->obj == NULL || tile->hidden ||
+            s_wp7.in_list || s_wp7.in_settings) {
+        return;
+    }
+
+    scale = clamp_i32(scale, WP7_OBJ_PRESS_SCALE, WP7_OBJ_RELEASE_SCALE);
+
+    const int32_t size = tile->size * scale / WP7_OBJ_RELEASE_SCALE;
+    const int32_t x = tile->x + (tile->size - size) / 2;
+    const int32_t y = tile->y + (tile->size - size) / 2;
+
+    lv_obj_set_style_transform_scale(tile->obj, WP7_OBJ_RELEASE_SCALE, 0);
+    lv_obj_set_style_bg_color(tile->obj, theme_color(), 0);
+    lv_obj_set_style_bg_opa(tile->obj, LV_OPA_COVER, 0);
+    set_tile_visual_style(tile, LV_OPA_COVER, WP7_OBJ_RELEASE_SCALE);
+    set_tile_frame(tile, x, y, size, size);
+}
+
+static void tile_press_scale_anim_cb(void *var, int32_t scale)
+{
+    set_tile_press_scale((wp7_tile_t *)var, scale);
+}
+
+static void tile_press_anim_completed_cb(lv_anim_t *anim)
+{
+    wp7_tile_t *tile = (wp7_tile_t *)anim->var;
+
+    if (tile == NULL) {
+        return;
+    }
+
+    tile->press_animating = false;
+    tile->press_releasing = false;
+
+    if (!tile->press_active && tile->current_w >= tile->size) {
+        set_tile_press_scale(tile, WP7_OBJ_RELEASE_SCALE);
+    }
+}
+
+static void start_tile_press_anim(wp7_tile_t *tile, bool pressed)
+{
+    if (tile == NULL || tile->obj == NULL) {
+        return;
+    }
+
+    lv_anim_del(tile, tile_press_scale_anim_cb);
+    tile->press_active = pressed;
+    tile->press_animating = true;
+    tile->press_releasing = !pressed;
+
+    lv_anim_t anim;
+
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, tile);
+    lv_anim_set_exec_cb(&anim, tile_press_scale_anim_cb);
+    lv_anim_set_values(&anim, tile_press_current_scale(tile),
+                       pressed ? WP7_OBJ_PRESS_SCALE : WP7_OBJ_RELEASE_SCALE);
+    lv_anim_set_duration(&anim, scaled_ui_anim_ms(WP7_PRESS_ANIM_MS));
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+    lv_anim_set_completed_cb(&anim, tile_press_anim_completed_cb);
+    lv_anim_start(&anim);
+}
+
+static void tile_press_event_cb(lv_event_t *event)
+{
+    const lv_event_code_t code = lv_event_get_code(event);
+    wp7_tile_t *tile = (wp7_tile_t *)lv_event_get_user_data(event);
+
+    if (code == LV_EVENT_PRESSED) {
+        store_control_press_point();
+        start_tile_press_anim(tile, true);
+    } else if (code == LV_EVENT_PRESSING) {
+        if (tile != NULL && tile->press_active && control_moved_past_tap_threshold()) {
+            start_tile_press_anim(tile, false);
+        }
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        start_tile_press_anim(tile, false);
+    }
+}
+
+static void release_tile_press_for_drag(void)
+{
+    for (int32_t i = 0; i < s_wp7.tile_count; i++) {
+        wp7_tile_t *tile = &s_wp7.tiles[i];
+
+        if (tile->obj == NULL || tile->hidden) {
+            continue;
+        }
+
+        if (tile->press_active || tile->press_animating) {
+            lv_anim_del(tile, tile_press_scale_anim_cb);
+            tile->press_active = false;
+            tile->press_animating = false;
+            tile->press_releasing = false;
+        }
+    }
 }
 
 static void settings_tile_clicked_cb(lv_event_t *event)
@@ -1760,11 +2557,35 @@ static void settings_slider_cb(lv_event_t *event)
 {
     const lv_event_code_t code = lv_event_get_code(event);
 
-    if (code == LV_EVENT_VALUE_CHANGED) {
-        s_wp7.anim_speed_percent = sanitize_animation_speed(lv_slider_get_value(s_wp7.settings_slider));
+    if (code == LV_EVENT_PRESSED) {
+        store_control_press_point();
+        s_wp7.settings_slider_press_value = lv_slider_get_value(s_wp7.settings_slider);
+        s_wp7.settings_slider_tap_pending = true;
+        start_knob_extend_anim(s_wp7.settings_slider, WP7_KNOB_PRESS_EXTEND);
+
+        const int32_t value = sanitize_animation_speed(
+            slider_value_from_active_point(s_wp7.settings_slider));
+
+        if (value != s_wp7.settings_slider_press_value) {
+            s_wp7.settings_slider_tap_pending = false;
+            animate_slider_to_value(s_wp7.settings_slider, value);
+            s_wp7.anim_speed_percent = value;
+            update_reset_button_state();
+        }
+    } else if (code == LV_EVENT_PRESSING) {
+        if (control_moved_past_tap_threshold()) {
+            s_wp7.settings_slider_tap_pending = false;
+        }
+    } else if (code == LV_EVENT_VALUE_CHANGED) {
+        const int32_t value = sanitize_animation_speed(lv_slider_get_value(s_wp7.settings_slider));
+
+        s_wp7.settings_slider_tap_pending = false;
+        s_wp7.anim_speed_percent = value;
         update_reset_button_state();
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
         s_wp7.anim_speed_percent = sanitize_animation_speed(lv_slider_get_value(s_wp7.settings_slider));
+        s_wp7.settings_slider_tap_pending = false;
+        start_knob_extend_anim(s_wp7.settings_slider, WP7_KNOB_RELEASE_EXTEND);
         update_reset_button_state();
         save_animation_speed();
     }
@@ -1774,36 +2595,133 @@ static void settings_brightness_cb(lv_event_t *event)
 {
     const lv_event_code_t code = lv_event_get_code(event);
 
-    if (code == LV_EVENT_VALUE_CHANGED) {
-        s_wp7.brightness_percent = sanitize_brightness(lv_slider_get_value(s_wp7.brightness_slider));
-        bsp_display_brightness_set(s_wp7.brightness_percent);
+    if (code == LV_EVENT_PRESSED) {
+        store_control_press_point();
+        s_wp7.brightness_slider_press_value = lv_slider_get_value(s_wp7.brightness_slider);
+        s_wp7.brightness_slider_tap_pending = true;
+        start_knob_extend_anim(s_wp7.brightness_slider, WP7_KNOB_PRESS_EXTEND);
+
+        const int32_t value = sanitize_brightness(
+            slider_value_from_active_point(s_wp7.brightness_slider));
+
+        if (value != s_wp7.brightness_slider_press_value) {
+            s_wp7.brightness_slider_tap_pending = false;
+            s_wp7.brightness_slider_tap_animating = true;
+            animate_slider_to_value(s_wp7.brightness_slider, value);
+            animate_brightness_to(value);
+        }
+    } else if (code == LV_EVENT_PRESSING) {
+        if (control_moved_past_tap_threshold()) {
+            s_wp7.brightness_slider_tap_pending = false;
+            s_wp7.brightness_slider_tap_animating = false;
+        }
+    } else if (code == LV_EVENT_VALUE_CHANGED) {
+        const int32_t value = sanitize_brightness(lv_slider_get_value(s_wp7.brightness_slider));
+
+        if (s_wp7.brightness_slider_tap_animating && !control_moved_past_tap_threshold()) {
+            return;
+        }
+
+        s_wp7.brightness_slider_tap_pending = false;
+        s_wp7.brightness_slider_tap_animating = false;
+        set_brightness_immediate(value);
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        s_wp7.brightness_percent = sanitize_brightness(lv_slider_get_value(s_wp7.brightness_slider));
-        bsp_display_brightness_set(s_wp7.brightness_percent);
+        if (!s_wp7.brightness_slider_tap_animating) {
+            set_brightness_immediate(lv_slider_get_value(s_wp7.brightness_slider));
+        }
+
+        s_wp7.brightness_slider_tap_pending = false;
+        s_wp7.brightness_slider_tap_animating = false;
+        start_knob_extend_anim(s_wp7.brightness_slider, WP7_KNOB_RELEASE_EXTEND);
         save_brightness();
     }
 }
 
 static void settings_mode_switch_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_VALUE_CHANGED) {
-        return;
-    }
+    const lv_event_code_t code = lv_event_get_code(event);
 
-    s_wp7.dark_mode = lv_obj_has_state(s_wp7.mode_switch, LV_STATE_CHECKED);
-    update_theme_controls();
-    save_dark_mode();
+    if (code == LV_EVENT_PRESSED) {
+        store_control_press_point();
+        s_wp7.mode_switch_press_checked = s_wp7.dark_mode;
+        s_wp7.mode_switch_tap_pending = true;
+        start_knob_extend_anim(s_wp7.mode_switch, WP7_KNOB_PRESS_EXTEND);
+    } else if (code == LV_EVENT_PRESSING) {
+        if (control_moved_past_tap_threshold()) {
+            s_wp7.mode_switch_tap_pending = false;
+        }
+    } else if (code == LV_EVENT_VALUE_CHANGED) {
+        if (s_wp7.mode_switch_tap_pending && !control_moved_past_tap_threshold()) {
+            set_wp7_switch_value(s_wp7.mode_switch, s_wp7.mode_switch_press_checked,
+                                 LV_ANIM_OFF);
+            set_wp7_switch_style(s_wp7.mode_switch, s_wp7.mode_switch_press_checked);
+            return;
+        }
+
+        set_wp7_switch_style(s_wp7.mode_switch,
+                             wp7_switch_value_checked(s_wp7.mode_switch));
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        const bool tap = code == LV_EVENT_RELEASED &&
+                         s_wp7.mode_switch_tap_pending &&
+                         !control_moved_past_tap_threshold();
+        const bool checked = tap ? !s_wp7.mode_switch_press_checked :
+                             wp7_switch_value_checked(s_wp7.mode_switch);
+
+        s_wp7.mode_switch_tap_pending = false;
+        set_wp7_switch_value(s_wp7.mode_switch, checked, LV_ANIM_ON);
+        set_wp7_switch_style(s_wp7.mode_switch, checked);
+        start_knob_extend_anim(s_wp7.mode_switch, WP7_KNOB_RELEASE_EXTEND);
+
+        if (checked != s_wp7.dark_mode) {
+            start_color_scheme_anim(checked);
+        }
+
+        save_dark_mode();
+    }
 }
 
 static void settings_fast_switch_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_VALUE_CHANGED) {
-        return;
-    }
+    const lv_event_code_t code = lv_event_get_code(event);
 
-    s_wp7.fast_animations = lv_obj_has_state(s_wp7.fast_switch, LV_STATE_CHECKED);
-    update_theme_controls();
-    save_fast_animations();
+    if (code == LV_EVENT_PRESSED) {
+        store_control_press_point();
+        s_wp7.fast_switch_press_checked = s_wp7.fast_animations;
+        s_wp7.fast_switch_tap_pending = true;
+        start_knob_extend_anim(s_wp7.fast_switch, WP7_KNOB_PRESS_EXTEND);
+    } else if (code == LV_EVENT_PRESSING) {
+        if (control_moved_past_tap_threshold()) {
+            s_wp7.fast_switch_tap_pending = false;
+        }
+    } else if (code == LV_EVENT_VALUE_CHANGED) {
+        if (s_wp7.fast_switch_tap_pending && !control_moved_past_tap_threshold()) {
+            set_wp7_switch_value(s_wp7.fast_switch, s_wp7.fast_switch_press_checked,
+                                 LV_ANIM_OFF);
+            set_wp7_switch_style(s_wp7.fast_switch, s_wp7.fast_switch_press_checked);
+            return;
+        }
+
+        set_wp7_switch_style(s_wp7.fast_switch,
+                             wp7_switch_value_checked(s_wp7.fast_switch));
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        const bool tap = code == LV_EVENT_RELEASED &&
+                         s_wp7.fast_switch_tap_pending &&
+                         !control_moved_past_tap_threshold();
+        const bool checked = tap ? !s_wp7.fast_switch_press_checked :
+                             wp7_switch_value_checked(s_wp7.fast_switch);
+
+        s_wp7.fast_switch_tap_pending = false;
+        set_wp7_switch_value(s_wp7.fast_switch, checked, LV_ANIM_ON);
+        set_wp7_switch_style(s_wp7.fast_switch, checked);
+        start_knob_extend_anim(s_wp7.fast_switch, WP7_KNOB_RELEASE_EXTEND);
+
+        if (checked != s_wp7.fast_animations) {
+            s_wp7.fast_animations = checked;
+            update_theme_controls();
+        }
+
+        save_fast_animations();
+    }
 }
 
 static void settings_theme_clicked_cb(lv_event_t *event)
@@ -1816,6 +2734,8 @@ static void settings_theme_clicked_cb(lv_event_t *event)
     const int32_t next_index = sanitize_theme_index((int32_t)index);
     const int32_t prev_index = sanitize_theme_index(s_wp7.theme_index);
     const uint32_t current_color = theme_color_hex();
+    const uint32_t current_text_color = theme_text_color_hex();
+    const uint32_t next_color = raw_theme_color_hex(next_index);
 
     if (next_index == prev_index && !s_wp7.theme_animating) {
         return;
@@ -1829,7 +2749,8 @@ static void settings_theme_clicked_cb(lv_event_t *event)
     }
 
     s_wp7.theme_index = next_index;
-    start_theme_color_anim(current_color, raw_theme_color_hex(next_index));
+    start_theme_color_anim(current_color, current_text_color,
+                           next_color, theme_text_color_hex_for_color(next_color));
 }
 
 static void settings_reset_clicked_cb(lv_event_t *event)
@@ -1839,9 +2760,86 @@ static void settings_reset_clicked_cb(lv_event_t *event)
     }
 
     s_wp7.anim_speed_percent = WP7_ANIM_SPEED_DEFAULT;
+    set_control_anim_duration(s_wp7.settings_slider);
     lv_slider_set_value(s_wp7.settings_slider, s_wp7.anim_speed_percent, LV_ANIM_ON);
+    set_reset_button_press_scale(WP7_OBJ_RELEASE_SCALE);
     update_reset_button_state();
     save_animation_speed();
+}
+
+static int32_t reset_button_current_scale(void)
+{
+    wp7_setting_item_t *item = &s_wp7.settings_items[WP7_SETTINGS_ITEM_RESET_BUTTON];
+
+    if (s_wp7.settings_reset_button == NULL || item->w <= 0) {
+        return WP7_OBJ_RELEASE_SCALE;
+    }
+
+    return clamp_i32(lv_obj_get_width(s_wp7.settings_reset_button) *
+                     WP7_OBJ_RELEASE_SCALE / item->w,
+                     WP7_OBJ_PRESS_SCALE, WP7_OBJ_RELEASE_SCALE);
+}
+
+static void set_reset_button_press_scale(int32_t scale)
+{
+    wp7_setting_item_t *item = &s_wp7.settings_items[WP7_SETTINGS_ITEM_RESET_BUTTON];
+
+    if (s_wp7.settings_reset_button == NULL || s_wp7.settings_reset_label == NULL ||
+            item->obj == NULL || lv_obj_has_state(s_wp7.settings_reset_button, LV_STATE_DISABLED)) {
+        return;
+    }
+
+    scale = clamp_i32(scale, WP7_OBJ_PRESS_SCALE, WP7_OBJ_RELEASE_SCALE);
+
+    const int32_t w = item->w * scale / WP7_OBJ_RELEASE_SCALE;
+    const int32_t h = item->h * scale / WP7_OBJ_RELEASE_SCALE;
+    const int32_t x = item->x + (item->w - w) / 2;
+    const int32_t y = item->y + (item->h - h) / 2;
+
+    lv_obj_set_style_transform_scale(s_wp7.settings_reset_button, WP7_OBJ_RELEASE_SCALE, 0);
+    lv_obj_set_style_bg_color(s_wp7.settings_reset_button, theme_color(), 0);
+    lv_obj_set_style_bg_opa(s_wp7.settings_reset_button, LV_OPA_COVER, 0);
+    lv_obj_set_pos(s_wp7.settings_reset_button, x, y);
+    lv_obj_set_size(s_wp7.settings_reset_button, w, h);
+    lv_obj_center(s_wp7.settings_reset_label);
+}
+
+static void reset_button_press_scale_anim_cb(void *var, int32_t scale)
+{
+    (void)var;
+
+    set_reset_button_press_scale(scale);
+}
+
+static void start_reset_button_press_anim(bool pressed)
+{
+    if (s_wp7.settings_reset_button == NULL) {
+        return;
+    }
+
+    lv_anim_del(s_wp7.settings_reset_button, reset_button_press_scale_anim_cb);
+
+    lv_anim_t anim;
+
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, s_wp7.settings_reset_button);
+    lv_anim_set_exec_cb(&anim, reset_button_press_scale_anim_cb);
+    lv_anim_set_values(&anim, reset_button_current_scale(),
+                       pressed ? WP7_OBJ_PRESS_SCALE : WP7_OBJ_RELEASE_SCALE);
+    lv_anim_set_duration(&anim, scaled_ui_anim_ms(WP7_PRESS_ANIM_MS));
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+    lv_anim_start(&anim);
+}
+
+static void settings_reset_press_cb(lv_event_t *event)
+{
+    const lv_event_code_t code = lv_event_get_code(event);
+
+    if (code == LV_EVENT_PRESSED) {
+        start_reset_button_press_anim(true);
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        start_reset_button_press_anim(false);
+    }
 }
 
 static void screen_touch_cb(lv_event_t *event)
@@ -1859,17 +2857,24 @@ static void screen_touch_cb(lv_event_t *event)
     }
 
     if (code == LV_EVENT_PRESSED) {
+        lv_indev_get_point(indev, &point);
+        const bool interrupted = interrupt_transition_anim_for_drag();
+
         if (s_wp7.animating) {
             return;
         }
 
-        lv_indev_get_point(indev, &point);
         s_wp7.drag_start_x = point.x;
         s_wp7.drag_start_y = point.y;
-        s_wp7.drag_progress = 0;
-        s_wp7.drag_target_progress = 0;
+        if (!interrupted) {
+            s_wp7.drag_progress = 0;
+            s_wp7.drag_target_progress = 0;
+            s_wp7.drag_base_progress = 0;
+            s_wp7.drag_dir = WP7_DIR_NONE;
+            s_wp7.drag_interrupted_anim = false;
+            s_wp7.drag_interrupted_commit = false;
+        }
         s_wp7.drag_last_tick = lv_tick_get();
-        s_wp7.drag_dir = WP7_DIR_NONE;
         s_wp7.drag_active = true;
     } else if (code == LV_EVENT_PRESSING) {
         if (!s_wp7.drag_active || s_wp7.animating) {
@@ -1945,7 +2950,15 @@ static void create_tile_grid(lv_obj_t *screen, int32_t screen_w, int32_t screen_
             lv_obj_set_size(tile_obj, tile, tile);
             lv_obj_set_pos(tile_obj, pad + col * (tile + gap), content_top + row * (tile + gap));
             lv_obj_set_style_bg_color(tile_obj, theme_color(), 0);
+            lv_obj_set_style_bg_color(tile_obj, theme_color(), LV_STATE_PRESSED);
+            lv_obj_set_style_bg_color(tile_obj, theme_color(), LV_STATE_FOCUSED);
+            lv_obj_set_style_bg_color(tile_obj, theme_color(),
+                                      LV_STATE_PRESSED | LV_STATE_FOCUSED);
             lv_obj_set_style_bg_opa(tile_obj, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_opa(tile_obj, LV_OPA_COVER, LV_STATE_PRESSED);
+            lv_obj_set_style_bg_opa(tile_obj, LV_OPA_COVER, LV_STATE_FOCUSED);
+            lv_obj_set_style_bg_opa(tile_obj, LV_OPA_COVER,
+                                    LV_STATE_PRESSED | LV_STATE_FOCUSED);
             lv_obj_set_style_radius(tile_obj, 0, 0);
             lv_obj_remove_flag(tile_obj, LV_OBJ_FLAG_SCROLLABLE);
             lv_obj_add_flag(tile_obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
@@ -1964,7 +2977,25 @@ static void create_tile_grid(lv_obj_t *screen, int32_t screen_w, int32_t screen_
             tile_data->x = pad + col * (tile + gap);
             tile_data->y = content_top + row * (tile + gap);
             tile_data->size = tile;
+            tile_data->label_page = -1;
+            tile_data->label_index = -1;
+            tile_data->current_x = tile_data->x;
+            tile_data->current_y = tile_data->y;
+            tile_data->current_w = tile;
+            tile_data->current_h = tile;
+            tile_data->current_scale = 256;
+            tile_data->current_opa = LV_OPA_COVER;
+            tile_data->hidden = false;
+            tile_data->frame_valid = true;
+            tile_data->style_valid = true;
+            tile_data->press_active = false;
+            tile_data->press_animating = false;
+            tile_data->press_releasing = false;
 
+            lv_obj_add_event_cb(tile_obj, tile_press_event_cb, LV_EVENT_PRESSED, tile_data);
+            lv_obj_add_event_cb(tile_obj, tile_press_event_cb, LV_EVENT_PRESSING, tile_data);
+            lv_obj_add_event_cb(tile_obj, tile_press_event_cb, LV_EVENT_RELEASED, tile_data);
+            lv_obj_add_event_cb(tile_obj, tile_press_event_cb, LV_EVENT_PRESS_LOST, tile_data);
             lv_obj_add_event_cb(tile_obj, settings_tile_clicked_cb, LV_EVENT_CLICKED, tile_data);
         }
     }
@@ -2039,6 +3070,9 @@ static void create_list_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_
         item_data->y = content_top + i * (row_h + gap);
         item_data->w = row_w;
         item_data->h = row_h;
+        item_data->current_x = row_x;
+        item_data->hidden = true;
+        item_data->frame_valid = true;
 
         lv_obj_add_flag(item_obj, LV_OBJ_FLAG_HIDDEN);
     }
@@ -2073,6 +3107,7 @@ static lv_obj_t *create_settings_label(lv_obj_t *screen, const char *text,
 static void style_settings_slider(lv_obj_t *slider, int32_t screen_w, int32_t screen_h)
 {
     lv_obj_remove_style_all(slider);
+    set_control_anim_duration(slider);
     lv_obj_set_style_bg_color(slider, ui_track_color(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(slider, 0, LV_PART_MAIN);
@@ -2085,6 +3120,42 @@ static void style_settings_slider(lv_obj_t *slider, int32_t screen_w, int32_t sc
     lv_obj_set_style_radius(slider, 0, LV_PART_KNOB);
     lv_obj_set_style_width(slider, scaled_px(screen_w, 36), LV_PART_KNOB);
     lv_obj_set_style_height(slider, scaled_px(screen_h, 36), LV_PART_KNOB);
+    lv_obj_set_style_transform_width(slider, WP7_KNOB_RELEASE_EXTEND, LV_PART_KNOB);
+    lv_obj_set_style_transform_height(slider, WP7_KNOB_RELEASE_EXTEND, LV_PART_KNOB);
+}
+
+static void style_wp7_switch_slider(lv_obj_t *sw, int32_t w, int32_t h)
+{
+    const int32_t end_pad = h / 2;
+
+    lv_obj_remove_style_all(sw);
+    lv_slider_set_range(sw, 0, WP7_SWITCH_VALUE_MAX);
+    set_control_anim_duration(sw);
+    lv_obj_set_size(sw, w, h);
+    lv_obj_set_style_pad_left(sw, end_pad, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(sw, end_pad, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER,
+                            LV_PART_MAIN | LV_STATE_CHECKED | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_INDICATOR | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER,
+                            LV_PART_INDICATOR | LV_STATE_CHECKED | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_KNOB | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_KNOB | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER,
+                            LV_PART_KNOB | LV_STATE_CHECKED | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(sw, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(sw, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(sw, 0, LV_PART_KNOB);
+    lv_obj_set_style_width(sw, h, LV_PART_KNOB);
+    lv_obj_set_style_height(sw, h, LV_PART_KNOB);
+    lv_obj_set_style_transform_width(sw, WP7_KNOB_RELEASE_EXTEND, LV_PART_KNOB);
+    lv_obj_set_style_transform_height(sw, WP7_KNOB_RELEASE_EXTEND, LV_PART_KNOB);
+    lv_obj_remove_flag(sw, LV_OBJ_FLAG_SCROLLABLE);
 }
 
 static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_h, int32_t status_h)
@@ -2101,29 +3172,34 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     const int32_t label_h = scaled_px(screen_h, 44);
     const int32_t slider_h = scaled_px(screen_h, 42);
     const int32_t mode_h = scaled_px(screen_h, 52);
-    const int32_t mode_y = title_y + scaled_px(screen_h, 84);
     const int32_t button_w = scaled_px(screen_w, 230);
     const int32_t button_h = scaled_px(screen_h, 70);
-    const int32_t mode_switch_w = scaled_px(screen_w, 150);
-    const int32_t mode_switch_h = scaled_px(screen_h, 48);
-    const int32_t mode_switch_y = mode_y + mode_h + scaled_px(screen_h, 8);
-    const int32_t brightness_label_y = mode_switch_y + mode_switch_h + scaled_px(screen_h, 28);
+    const int32_t mode_switch_h = scaled_px(screen_h, 42);
+    const int32_t mode_switch_w = mode_switch_h * 2;
+    const int32_t switch_gap = scaled_px(screen_h, 4);
+    const int32_t section_gap = scaled_px(screen_h, 18);
+    const int32_t compact_section_gap = scaled_px(screen_h, 10);
+    const int32_t brightness_label_y = title_y + scaled_px(screen_h, 84);
     const int32_t brightness_slider_y = brightness_label_y + scaled_px(screen_h, 46);
-    const int32_t theme_label_y = brightness_slider_y + scaled_px(screen_h, 58);
+    const int32_t mode_y = brightness_slider_y + slider_h + section_gap;
+    const int32_t mode_switch_y = mode_y + mode_h + switch_gap;
+    const int32_t theme_label_y = mode_switch_y + mode_switch_h + compact_section_gap;
     const int32_t theme_picker_y = theme_label_y + scaled_px(screen_h, 46);
-    const int32_t speed_label_y = theme_picker_y + picker_h + scaled_px(screen_h, 34);
+    const int32_t speed_label_y = theme_picker_y + picker_h + section_gap;
     const int32_t speed_slider_y = speed_label_y + scaled_px(screen_h, 46);
-    const int32_t fast_label_y = speed_slider_y + scaled_px(screen_h, 58);
-    const int32_t fast_switch_y = fast_label_y + mode_h + scaled_px(screen_h, 8);
     const int32_t button_x = screen_w - pad - button_w;
-    const int32_t button_y = fast_switch_y + mode_switch_h + scaled_px(screen_h, 28);
+    const int32_t button_y = speed_slider_y + scaled_px(screen_h, 62);
+    const int32_t fast_label_y = button_y + button_h + section_gap;
+    const int32_t fast_switch_y = fast_label_y + mode_h + switch_gap;
     const int32_t mode_label_w = content_w;
-    const int32_t mode_switch_x = pad + content_w - mode_switch_w;
+    const int32_t mode_switch_x = pad + content_w - mode_switch_w -
+                                  scaled_px(screen_w, 30);
 
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, "UI Settings");
     lv_obj_set_style_text_color(title, ui_text_color(), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_34, 0);
+    lv_obj_set_style_opa(title, LV_OPA_COVER, 0);
     lv_obj_set_style_transform_pivot_x(title, 0, 0);
     lv_obj_set_style_transform_pivot_y(title, title_h / 2, 0);
     lv_obj_set_size(title, content_w, title_h);
@@ -2136,6 +3212,13 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     s_wp7.settings_title_y = title_y;
     s_wp7.settings_title_w = content_w;
     s_wp7.settings_title_h = title_h;
+    s_wp7.settings_title_current_x = pad;
+    s_wp7.settings_title_current_scale = 256;
+    s_wp7.settings_title_current_opa = LV_OPA_COVER;
+    s_wp7.settings_title_current_text_hex = ui_text_color_hex();
+    s_wp7.settings_title_hidden = false;
+    s_wp7.settings_title_frame_valid = true;
+    s_wp7.settings_title_style_valid = true;
 
     lv_obj_t *brightness_label = create_settings_label(screen, "Brightness",
                                                        pad, brightness_label_y,
@@ -2149,6 +3232,8 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     lv_slider_set_value(brightness_slider, sanitize_brightness(s_wp7.brightness_percent), LV_ANIM_OFF);
     lv_obj_set_size(brightness_slider, content_w, slider_h);
     lv_obj_set_pos(brightness_slider, pad, brightness_slider_y);
+    lv_obj_add_event_cb(brightness_slider, settings_brightness_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(brightness_slider, settings_brightness_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(brightness_slider, settings_brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(brightness_slider, settings_brightness_cb, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(brightness_slider, settings_brightness_cb, LV_EVENT_PRESS_LOST, NULL);
@@ -2166,18 +3251,16 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     set_setting_item(WP7_SETTINGS_ITEM_MODE_LABEL, mode_label,
                      pad, mode_y, mode_label_w, mode_h);
 
-    lv_obj_t *mode_switch = lv_switch_create(screen);
-    lv_obj_set_size(mode_switch, mode_switch_w, mode_switch_h);
+    lv_obj_t *mode_switch = lv_slider_create(screen);
+    style_wp7_switch_slider(mode_switch, mode_switch_w, mode_switch_h);
     lv_obj_set_pos(mode_switch, mode_switch_x, mode_switch_y);
-    lv_obj_set_style_radius(mode_switch, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(mode_switch, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(mode_switch, 0, LV_PART_KNOB);
-    lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_INDICATOR | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_KNOB);
-    lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_KNOB | LV_STATE_CHECKED);
+    set_wp7_switch_value(mode_switch, s_wp7.dark_mode, LV_ANIM_OFF);
+    set_wp7_switch_style(mode_switch, s_wp7.dark_mode);
+    lv_obj_add_event_cb(mode_switch, settings_mode_switch_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(mode_switch, settings_mode_switch_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(mode_switch, settings_mode_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(mode_switch, settings_mode_switch_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(mode_switch, settings_mode_switch_cb, LV_EVENT_PRESS_LOST, NULL);
     s_wp7.mode_switch = mode_switch;
     set_setting_item(WP7_SETTINGS_ITEM_MODE_SWITCH, mode_switch,
                      mode_switch_x, mode_switch_y, mode_switch_w, mode_switch_h);
@@ -2241,34 +3324,14 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     lv_slider_set_value(slider, sanitize_animation_speed(s_wp7.anim_speed_percent), LV_ANIM_OFF);
     lv_obj_set_size(slider, content_w, slider_h);
     lv_obj_set_pos(slider, pad, speed_slider_y);
+    lv_obj_add_event_cb(slider, settings_slider_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(slider, settings_slider_cb, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(slider, settings_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(slider, settings_slider_cb, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(slider, settings_slider_cb, LV_EVENT_PRESS_LOST, NULL);
     s_wp7.settings_slider = slider;
     set_setting_item(WP7_SETTINGS_ITEM_SPEED_SLIDER, slider,
                      pad, speed_slider_y, content_w, slider_h);
-
-    lv_obj_t *fast_label = create_settings_label(screen, "Fast animations",
-                                                 pad, fast_label_y,
-                                                 content_w, label_h);
-    set_setting_item(WP7_SETTINGS_ITEM_FAST_LABEL, fast_label,
-                     pad, fast_label_y, content_w, label_h);
-
-    lv_obj_t *fast_switch = lv_switch_create(screen);
-    lv_obj_set_size(fast_switch, mode_switch_w, mode_switch_h);
-    lv_obj_set_pos(fast_switch, mode_switch_x, fast_switch_y);
-    lv_obj_set_style_radius(fast_switch, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(fast_switch, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(fast_switch, 0, LV_PART_KNOB);
-    lv_obj_set_style_bg_opa(fast_switch, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(fast_switch, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(fast_switch, LV_OPA_COVER, LV_PART_INDICATOR | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_opa(fast_switch, LV_OPA_COVER, LV_PART_KNOB);
-    lv_obj_set_style_bg_opa(fast_switch, LV_OPA_COVER, LV_PART_KNOB | LV_STATE_CHECKED);
-    lv_obj_add_event_cb(fast_switch, settings_fast_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    s_wp7.fast_switch = fast_switch;
-    set_setting_item(WP7_SETTINGS_ITEM_FAST_SWITCH, fast_switch,
-                     mode_switch_x, fast_switch_y, mode_switch_w, mode_switch_h);
 
     lv_obj_t *button = lv_obj_create(screen);
     lv_obj_remove_style_all(button);
@@ -2277,6 +3340,10 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(button, 0, 0);
     lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(button, settings_reset_press_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(button, settings_reset_press_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(button, settings_reset_press_cb, LV_EVENT_PRESS_LOST, NULL);
     lv_obj_add_event_cb(button, settings_reset_clicked_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *button_label = lv_label_create(button);
@@ -2288,6 +3355,26 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     s_wp7.settings_reset_label = button_label;
     set_setting_item(WP7_SETTINGS_ITEM_RESET_BUTTON, button,
                      button_x, button_y, button_w, button_h);
+
+    lv_obj_t *fast_label = create_settings_label(screen, "Fast animations",
+                                                 pad, fast_label_y,
+                                                 content_w, label_h);
+    set_setting_item(WP7_SETTINGS_ITEM_FAST_LABEL, fast_label,
+                     pad, fast_label_y, content_w, label_h);
+
+    lv_obj_t *fast_switch = lv_slider_create(screen);
+    style_wp7_switch_slider(fast_switch, mode_switch_w, mode_switch_h);
+    lv_obj_set_pos(fast_switch, mode_switch_x, fast_switch_y);
+    set_wp7_switch_value(fast_switch, s_wp7.fast_animations, LV_ANIM_OFF);
+    set_wp7_switch_style(fast_switch, s_wp7.fast_animations);
+    lv_obj_add_event_cb(fast_switch, settings_fast_switch_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(fast_switch, settings_fast_switch_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(fast_switch, settings_fast_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(fast_switch, settings_fast_switch_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(fast_switch, settings_fast_switch_cb, LV_EVENT_PRESS_LOST, NULL);
+    s_wp7.fast_switch = fast_switch;
+    set_setting_item(WP7_SETTINGS_ITEM_FAST_SWITCH, fast_switch,
+                     mode_switch_x, fast_switch_y, mode_switch_w, mode_switch_h);
 
     update_theme_controls();
     hide_settings_items();
@@ -2325,6 +3412,7 @@ static void create_wp7_first_screen(void)
         .fast_animations = false,
     };
     load_ui_settings();
+    s_wp7.brightness_hw_percent = sanitize_brightness(s_wp7.brightness_percent);
     lv_obj_set_style_bg_color(screen, ui_bg_color(), 0);
 
     create_status_bar(screen, screen_w, status_h, pad);
@@ -2357,5 +3445,5 @@ void app_main(void)
     create_wp7_first_screen();
     bsp_display_unlock();
 
-    bsp_display_brightness_set(s_wp7.brightness_percent);
+    set_brightness_immediate(s_wp7.brightness_percent);
 }
