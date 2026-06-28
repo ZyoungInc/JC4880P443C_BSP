@@ -1,0 +1,150 @@
+dependencies:
+  chmorgan/esp-audio-player:
+    component_hash: c8ac1998e9af863bc41b57e592f88d1a5791a0f891485122336ddabbf7a65033
+    dependencies:
+    - name: chmorgan/esp-libhelix-mp3
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0.0,<2.0.0'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.7
+  chmorgan/esp-file-iterator:
+    component_hash: 327091394b9ef5c2cd395a960ab70ae64479e0a8831cbd9925e38895fad93719
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.0
+  chmorgan/esp-libhelix-mp3:
+    component_hash: cbb76089dc2c5749f7b470e2e70aedc44c9da519e04eb9a67d4c7ec275229e53
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.0.3
+  esp_codec_dev:
+    dependencies:
+    - name: idf
+      version: '>=4.0'
+    source:
+      path: /home/zyoung/project/esp/JC4880P443C_I_W/1-Demo/idf_examples/ESP-IDF/lvgl_demo_v9/common_components/espressif__esp_codec_dev
+      type: local
+    version: 1.2.0
+  esp_lcd_st7701:
+    dependencies:
+    - name: espressif/cmake_utilities
+      version: 0.*
+    - name: idf
+      version: '>5.0.4,!=5.1.1'
+    source:
+      path: /home/zyoung/project/esp/JC4880P443C_I_W/1-Demo/idf_examples/ESP-IDF/lvgl_demo_v9/common_components/espressif__esp_lcd_st7701
+      type: local
+    targets:
+    - esp32s3
+    - esp32p4
+    version: 1.1.3
+  esp_lcd_touch:
+    dependencies:
+    - name: idf
+      version: '>=4.4.2'
+    source:
+      path: /home/zyoung/project/esp/JC4880P443C_I_W/1-Demo/idf_examples/ESP-IDF/lvgl_demo_v9/common_components/espressif__esp_lcd_touch
+      type: local
+    version: 1.2.1
+  esp_lcd_touch_gt911:
+    dependencies:
+    - name: esp_lcd_touch
+      path: ../espressif__esp_lcd_touch
+      public: true
+    - name: idf
+      version: '>=5.2'
+    source:
+      path: /home/zyoung/project/esp/JC4880P443C_I_W/1-Demo/idf_examples/ESP-IDF/lvgl_demo_v9/common_components/espressif__esp_lcd_touch_gt911
+      type: local
+    version: 1.2.0~2
+  espressif/cmake_utilities:
+    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.5.3
+  espressif/esp-dsp:
+    component_hash: ed9ac175b14e0414399a2b33c525579414b5bad19a2a67b12ea212def96f9a98
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.8.2
+  espressif/esp_h264:
+    component_hash: 5ccc09adefccabade1530b9dd106d07c3c96e991dc35b5516063165ef60c5646
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s3
+    - esp32s31
+    - esp32p4
+    version: 1.3.6
+  espressif/esp_lvgl_port:
+    component_hash: fb6c1fdfe70d4ca39a035d63ca394a35f17ec84ce16ff98ecb13a54155d75da4
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.2'
+    - name: lvgl/lvgl
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=8,<10'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.8.0~1
+  idf:
+    source:
+      type: idf
+    version: 5.5.4
+  lvgl/lvgl:
+    component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 9.5.0
+direct_dependencies:
+- chmorgan/esp-audio-player
+- chmorgan/esp-file-iterator
+- esp_codec_dev
+- esp_lcd_st7701
+- esp_lcd_touch
+- esp_lcd_touch_gt911
+- espressif/cmake_utilities
+- espressif/esp-dsp
+- espressif/esp_h264
+- espressif/esp_lvgl_port
+- idf
+- lvgl/lvgl
+manifest_hash: e62ac1f30892647db1eee9518c5d478f23eca2986751f5640eca37aefdc141cf
+target: esp32p4
+version: 2.0.0

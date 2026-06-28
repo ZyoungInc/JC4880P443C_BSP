@@ -1,6 +1,9 @@
+**/squareline/backup/**
+**/squareline/autosave/**
+components/lvgl/**
 build/
-managed_components/
-dependencies.lock
-sdkconfig
+.vscode/
 sdkconfig.old
-.component_hash
+**/.component_hash
+__pycache__/
+*.pyc
