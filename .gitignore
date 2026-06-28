@@ -3,6 +3,7 @@
 components/lvgl/**
 build/
 .vscode/
+managed_components/
 sdkconfig.old
 **/.component_hash
 __pycache__/
