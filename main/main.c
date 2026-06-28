@@ -54,8 +54,6 @@
 
 typedef struct {
     lv_obj_t *obj;
-    lv_obj_t *icon;
-    lv_obj_t *icon_label;
     lv_obj_t *label;
     int32_t x;
     int32_t y;
@@ -64,6 +62,8 @@ typedef struct {
 
 typedef struct {
     lv_obj_t *obj;
+    lv_obj_t *icon;
+    lv_obj_t *icon_label;
     lv_obj_t *label;
     int32_t x;
     int32_t y;
