@@ -33,7 +33,7 @@
 #define WP7_SETTINGS_TILE_PHASE_UNIT (WP7_TILE_PROGRESS_UNIT * 2)
 #define WP7_SETTINGS_TITLE_PHASE_UNIT (WP7_TILE_PROGRESS_UNIT * 3 / 2)
 #define WP7_SETTINGS_TILE_INDEX      5
-#define WP7_SETTINGS_CONTENT_COUNT   7
+#define WP7_SETTINGS_CONTENT_COUNT   8
 #define WP7_ANIM_SPEED_MIN           50
 #define WP7_ANIM_SPEED_DEFAULT       100
 #define WP7_ANIM_SPEED_MAX           145
@@ -45,11 +45,12 @@
 #define WP7_BRIGHTNESS_MIN           5
 #define WP7_BRIGHTNESS_DEFAULT       100
 #define WP7_BRIGHTNESS_MAX           100
-#define WP7_THEME_COLOR_COUNT        6
+#define WP7_THEME_COLOR_COUNT        12
 #define WP7_NVS_NAMESPACE            "wp7_ui"
 #define WP7_NVS_SPEED_KEY            "anim_spd"
 #define WP7_NVS_BRIGHTNESS_KEY       "bright"
 #define WP7_NVS_THEME_KEY            "theme"
+#define WP7_NVS_DARK_KEY             "dark"
 
 typedef struct {
     lv_obj_t *obj;
@@ -89,6 +90,7 @@ typedef enum {
 typedef enum {
     WP7_SETTINGS_ITEM_BRIGHTNESS_LABEL,
     WP7_SETTINGS_ITEM_BRIGHTNESS_SLIDER,
+    WP7_SETTINGS_ITEM_MODE_SWITCH,
     WP7_SETTINGS_ITEM_THEME_LABEL,
     WP7_SETTINGS_ITEM_THEME_PICKER,
     WP7_SETTINGS_ITEM_SPEED_LABEL,
@@ -101,8 +103,14 @@ typedef struct {
     wp7_list_item_t list_items[WP7_MAX_LIST_ITEMS];
     wp7_setting_item_t settings_items[WP7_SETTINGS_CONTENT_COUNT];
     lv_obj_t *status_bar;
+    lv_obj_t *status_wifi_label;
+    lv_obj_t *status_time_label;
+    lv_obj_t *status_battery_label;
     lv_obj_t *settings_title;
     lv_obj_t *brightness_slider;
+    lv_obj_t *mode_switch;
+    lv_obj_t *mode_light_label;
+    lv_obj_t *mode_dark_label;
     lv_obj_t *theme_picker;
     lv_obj_t *theme_buttons[WP7_THEME_COLOR_COUNT];
     lv_obj_t *settings_slider;
@@ -132,6 +140,7 @@ typedef struct {
     bool commit_transition;
     bool in_list;
     bool in_settings;
+    bool dark_mode;
     wp7_page_dir_t drag_dir;
     wp7_page_dir_t anim_dir;
 } wp7_screen_t;
@@ -145,6 +154,12 @@ static const uint32_t s_wp7_theme_colors[WP7_THEME_COLOR_COUNT] = {
     0x6A00FF,
     0x00ABA9,
     0xFA6800,
+    0xE51400,
+    0xA20025,
+    0xF0A30A,
+    0x1BA1E2,
+    0x0050EF,
+    0x6D8764,
 };
 
 static int32_t scaled_px(int32_t base, int32_t permille)
@@ -267,6 +282,31 @@ static lv_color_t theme_text_color(void)
     return luma > 145000 ? lv_color_hex(0x06324A) : lv_color_hex(0xFFFFFF);
 }
 
+static lv_color_t ui_bg_color(void)
+{
+    return s_wp7.dark_mode ? lv_color_black() : lv_color_hex(0xF2F2F2);
+}
+
+static lv_color_t ui_text_color(void)
+{
+    return s_wp7.dark_mode ? lv_color_hex(0xEAF7FF) : lv_color_hex(0x111111);
+}
+
+static lv_color_t ui_track_color(void)
+{
+    return s_wp7.dark_mode ? lv_color_hex(0x2D2D2D) : lv_color_hex(0xD8D8D8);
+}
+
+static lv_color_t ui_disabled_bg_color(void)
+{
+    return s_wp7.dark_mode ? lv_color_hex(0x2C2C2C) : lv_color_hex(0xC8C8C8);
+}
+
+static lv_color_t ui_disabled_text_color(void)
+{
+    return lv_color_hex(0x777777);
+}
+
 static int32_t animation_speed_permille(void)
 {
     const int32_t speed = sanitize_animation_speed(s_wp7.anim_speed_percent);
@@ -349,10 +389,12 @@ static void load_ui_settings(void)
     uint16_t speed = WP7_ANIM_SPEED_DEFAULT;
     uint16_t brightness = WP7_BRIGHTNESS_DEFAULT;
     uint16_t theme = 0;
+    uint16_t dark = 1;
 
     s_wp7.anim_speed_percent = WP7_ANIM_SPEED_DEFAULT;
     s_wp7.brightness_percent = WP7_BRIGHTNESS_DEFAULT;
     s_wp7.theme_index = 0;
+    s_wp7.dark_mode = true;
 
     if (nvs_open(WP7_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
         return;
@@ -368,6 +410,10 @@ static void load_ui_settings(void)
 
     if (nvs_get_u16(handle, WP7_NVS_THEME_KEY, &theme) == ESP_OK) {
         s_wp7.theme_index = sanitize_theme_index(theme);
+    }
+
+    if (nvs_get_u16(handle, WP7_NVS_DARK_KEY, &dark) == ESP_OK) {
+        s_wp7.dark_mode = dark != 0;
     }
 
     nvs_close(handle);
@@ -405,6 +451,11 @@ static void save_theme(void)
     save_u16_setting(WP7_NVS_THEME_KEY, (uint16_t)sanitize_theme_index(s_wp7.theme_index));
 }
 
+static void save_dark_mode(void)
+{
+    save_u16_setting(WP7_NVS_DARK_KEY, s_wp7.dark_mode ? 1 : 0);
+}
+
 static void set_tile_number(wp7_tile_t *tile, int32_t page, int32_t index)
 {
     if (page == 0 && index == WP7_SETTINGS_TILE_INDEX) {
@@ -430,6 +481,80 @@ static void apply_theme_to_tiles(void)
         if (s_wp7.tiles[i].label != NULL) {
             lv_obj_set_style_text_color(s_wp7.tiles[i].label, theme_text_color(), 0);
         }
+    }
+}
+
+static void apply_color_scheme(void)
+{
+    lv_obj_t *screen = lv_screen_active();
+
+    if (screen != NULL) {
+        lv_obj_set_style_bg_color(screen, ui_bg_color(), 0);
+        lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+    }
+
+    if (s_wp7.status_wifi_label != NULL) {
+        lv_obj_set_style_text_color(s_wp7.status_wifi_label, ui_text_color(), 0);
+    }
+
+    if (s_wp7.status_time_label != NULL) {
+        lv_obj_set_style_text_color(s_wp7.status_time_label, ui_text_color(), 0);
+    }
+
+    if (s_wp7.status_battery_label != NULL) {
+        lv_obj_set_style_text_color(s_wp7.status_battery_label, ui_text_color(), 0);
+    }
+
+    for (int32_t i = 0; i < s_wp7.list_count; i++) {
+        if (s_wp7.list_items[i].obj != NULL) {
+            lv_obj_set_style_bg_color(s_wp7.list_items[i].obj, ui_bg_color(), 0);
+        }
+
+        if (s_wp7.list_items[i].label != NULL) {
+            lv_obj_set_style_text_color(s_wp7.list_items[i].label, ui_text_color(), 0);
+        }
+    }
+
+    if (s_wp7.settings_title != NULL) {
+        lv_obj_set_style_text_color(s_wp7.settings_title, ui_text_color(), 0);
+    }
+
+    for (int32_t i = 0; i < WP7_SETTINGS_CONTENT_COUNT; i++) {
+        if (s_wp7.settings_items[i].obj != NULL) {
+            lv_obj_set_style_text_color(s_wp7.settings_items[i].obj, ui_text_color(), 0);
+        }
+    }
+
+    if (s_wp7.brightness_slider != NULL) {
+        lv_obj_set_style_bg_color(s_wp7.brightness_slider, ui_track_color(), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_wp7.brightness_slider, ui_text_color(), LV_PART_KNOB);
+    }
+
+    if (s_wp7.settings_slider != NULL) {
+        lv_obj_set_style_bg_color(s_wp7.settings_slider, ui_track_color(), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_wp7.settings_slider, ui_text_color(), LV_PART_KNOB);
+    }
+
+    if (s_wp7.mode_switch != NULL) {
+        if (s_wp7.dark_mode) {
+            lv_obj_add_state(s_wp7.mode_switch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_remove_state(s_wp7.mode_switch, LV_STATE_CHECKED);
+        }
+
+        lv_obj_set_style_bg_color(s_wp7.mode_switch, ui_track_color(), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_wp7.mode_switch, theme_color(), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(s_wp7.mode_switch, ui_text_color(), LV_PART_KNOB);
+    }
+
+    if (s_wp7.mode_light_label != NULL) {
+        lv_obj_set_style_text_color(s_wp7.mode_light_label,
+                                    s_wp7.dark_mode ? ui_disabled_text_color() : ui_text_color(), 0);
+    }
+
+    if (s_wp7.mode_dark_label != NULL) {
+        lv_obj_set_style_text_color(s_wp7.mode_dark_label,
+                                    s_wp7.dark_mode ? ui_text_color() : ui_disabled_text_color(), 0);
     }
 }
 
@@ -491,6 +616,15 @@ static void set_tile_box(wp7_tile_t *tile, int32_t x, int32_t y, int32_t w, int3
     lv_obj_set_pos(tile->obj, x, y);
     lv_obj_set_size(tile->obj, w, h);
     lv_obj_center(tile->label);
+}
+
+static void set_tile_zoom_box(wp7_tile_t *tile, int32_t scale, lv_opa_t opa)
+{
+    const int32_t size = tile->size * scale / 256;
+    const int32_t x = tile->x - (size - tile->size) / 2;
+    const int32_t y = tile->y - (size - tile->size) / 2;
+
+    set_tile_box(tile, x, y, size, size, opa);
 }
 
 static void set_list_item_geometry(wp7_list_item_t *item, int32_t x)
@@ -696,8 +830,8 @@ static void update_reset_button_state(void)
     if (animation_speed_is_default()) {
         lv_obj_add_state(s_wp7.settings_reset_button, LV_STATE_DISABLED);
         lv_obj_remove_flag(s_wp7.settings_reset_button, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_bg_color(s_wp7.settings_reset_button, lv_color_hex(0x2C2C2C), 0);
-        lv_obj_set_style_text_color(s_wp7.settings_reset_label, lv_color_hex(0x777777), 0);
+        lv_obj_set_style_bg_color(s_wp7.settings_reset_button, ui_disabled_bg_color(), 0);
+        lv_obj_set_style_text_color(s_wp7.settings_reset_label, ui_disabled_text_color(), 0);
     } else {
         lv_obj_remove_state(s_wp7.settings_reset_button, LV_STATE_DISABLED);
         lv_obj_add_flag(s_wp7.settings_reset_button, LV_OBJ_FLAG_CLICKABLE);
@@ -716,18 +850,24 @@ static void update_theme_buttons(void)
         const bool selected = i == sanitize_theme_index(s_wp7.theme_index);
 
         lv_obj_set_style_border_width(s_wp7.theme_buttons[i], selected ? 4 : 0, 0);
-        lv_obj_set_style_border_color(s_wp7.theme_buttons[i], lv_color_hex(0xEAF7FF), 0);
+        lv_obj_set_style_border_color(s_wp7.theme_buttons[i], ui_text_color(), 0);
     }
 }
 
 static void update_theme_controls(void)
 {
+    apply_color_scheme();
+
     if (s_wp7.brightness_slider != NULL) {
         lv_obj_set_style_bg_color(s_wp7.brightness_slider, theme_color(), LV_PART_INDICATOR);
     }
 
     if (s_wp7.settings_slider != NULL) {
         lv_obj_set_style_bg_color(s_wp7.settings_slider, theme_color(), LV_PART_INDICATOR);
+    }
+
+    if (s_wp7.mode_switch != NULL) {
+        lv_obj_set_style_bg_color(s_wp7.mode_switch, theme_color(), LV_PART_INDICATOR);
     }
 
     apply_theme_to_tiles();
@@ -889,14 +1029,17 @@ static void render_tile_restore(wp7_tile_t *tile, int32_t eased_progress, bool g
 static void render_clicked_tile_fade(wp7_tile_t *tile, int32_t eased_progress, bool appear)
 {
     lv_opa_t opa;
+    int32_t scale;
 
     if (appear) {
         opa = (lv_opa_t)(LV_OPA_COVER * eased_progress / WP7_TILE_PROGRESS_UNIT);
+        scale = 512 - (256 * eased_progress / WP7_TILE_PROGRESS_UNIT);
     } else {
         opa = (lv_opa_t)(LV_OPA_COVER * (WP7_TILE_PROGRESS_UNIT - eased_progress) / WP7_TILE_PROGRESS_UNIT);
+        scale = 256 + (256 * eased_progress / WP7_TILE_PROGRESS_UNIT);
     }
 
-    set_tile_box(tile, tile->x, tile->y, tile->size, tile->size, opa);
+    set_tile_zoom_box(tile, scale, opa);
 }
 
 static void render_settings_content_in(int32_t progress)
@@ -906,8 +1049,10 @@ static void render_settings_content_in(int32_t progress)
     const int32_t title_x = -s_wp7.settings_title_w +
                             ((s_wp7.settings_title_x + s_wp7.settings_title_w) * title_eased /
                              WP7_TILE_PROGRESS_UNIT);
+    const int32_t title_scale = 384 - (128 * title_eased / WP7_TILE_PROGRESS_UNIT);
 
-    set_settings_title_geometry(title_x, 256, (lv_opa_t)(LV_OPA_COVER * title_eased / WP7_TILE_PROGRESS_UNIT));
+    set_settings_title_geometry(title_x, title_scale,
+                                (lv_opa_t)(LV_OPA_COVER * title_eased / WP7_TILE_PROGRESS_UNIT));
 
     for (int32_t i = 0; i < WP7_SETTINGS_CONTENT_COUNT; i++) {
         wp7_setting_item_t *item = &s_wp7.settings_items[i];
@@ -939,12 +1084,15 @@ static void render_settings_content_out(int32_t progress)
 static void render_settings_title_out(int32_t progress)
 {
     const int32_t eased_progress = ease_in_out_cubic(progress);
-    const int32_t scale = 256 - (128 * eased_progress / WP7_TILE_PROGRESS_UNIT);
+    const int32_t title_x = s_wp7.settings_title_x -
+                            ((s_wp7.settings_title_x + s_wp7.settings_title_w) *
+                             eased_progress / WP7_TILE_PROGRESS_UNIT);
+    const int32_t scale = 256 + (128 * eased_progress / WP7_TILE_PROGRESS_UNIT);
     const lv_opa_t opa = (lv_opa_t)(LV_OPA_COVER *
                                     (WP7_TILE_PROGRESS_UNIT - eased_progress) /
                                     WP7_TILE_PROGRESS_UNIT);
 
-    set_settings_title_geometry(s_wp7.settings_title_x, scale, opa);
+    set_settings_title_geometry(title_x, scale, opa);
 }
 
 static void render_settings_open_transition(int32_t progress)
@@ -1294,6 +1442,17 @@ static void settings_brightness_cb(lv_event_t *event)
     }
 }
 
+static void settings_mode_switch_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_VALUE_CHANGED) {
+        return;
+    }
+
+    s_wp7.dark_mode = lv_obj_has_state(s_wp7.mode_switch, LV_STATE_CHECKED);
+    update_theme_controls();
+    save_dark_mode();
+}
+
 static void settings_theme_clicked_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
@@ -1370,24 +1529,27 @@ static void create_status_bar(lv_obj_t *screen, int32_t screen_w, int32_t status
 
     lv_obj_t *wifi_label = lv_label_create(bar);
     lv_label_set_text(wifi_label, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_color(wifi_label, lv_color_hex(0xEAF7FF), 0);
+    lv_obj_set_style_text_color(wifi_label, ui_text_color(), 0);
     lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_20, 0);
     lv_obj_align(wifi_label, LV_ALIGN_LEFT_MID, pad, 0);
     lv_obj_add_flag(wifi_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    s_wp7.status_wifi_label = wifi_label;
 
     lv_obj_t *time_label = lv_label_create(bar);
     lv_label_set_text(time_label, "09:41");
-    lv_obj_set_style_text_color(time_label, lv_color_hex(0xEAF7FF), 0);
+    lv_obj_set_style_text_color(time_label, ui_text_color(), 0);
     lv_obj_set_style_text_font(time_label, &lv_font_montserrat_24, 0);
     lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(time_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    s_wp7.status_time_label = time_label;
 
     lv_obj_t *battery_label = lv_label_create(bar);
     lv_label_set_text(battery_label, LV_SYMBOL_BATTERY_3);
-    lv_obj_set_style_text_color(battery_label, lv_color_hex(0xEAF7FF), 0);
+    lv_obj_set_style_text_color(battery_label, ui_text_color(), 0);
     lv_obj_set_style_text_font(battery_label, &lv_font_montserrat_20, 0);
     lv_obj_align(battery_label, LV_ALIGN_RIGHT_MID, -pad, 0);
     lv_obj_add_flag(battery_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    s_wp7.status_battery_label = battery_label;
 }
 
 static void create_tile_grid(lv_obj_t *screen, int32_t screen_w, int32_t screen_h, int32_t status_h)
@@ -1471,7 +1633,7 @@ static void create_list_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_
         lv_obj_remove_style_all(item_obj);
         lv_obj_set_size(item_obj, row_w, row_h);
         lv_obj_set_pos(item_obj, pad, content_top + i * (row_h + gap));
-        lv_obj_set_style_bg_color(item_obj, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(item_obj, ui_bg_color(), 0);
         lv_obj_set_style_bg_opa(item_obj, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(item_obj, 0, 0);
         lv_obj_remove_flag(item_obj, LV_OBJ_FLAG_SCROLLABLE);
@@ -1479,7 +1641,7 @@ static void create_list_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_
 
         lv_obj_t *label = lv_label_create(item_obj);
         lv_label_set_text(label, item_labels[i % (sizeof(item_labels) / sizeof(item_labels[0]))]);
-        lv_obj_set_style_text_color(label, lv_color_hex(0xEAF7FF), 0);
+        lv_obj_set_style_text_color(label, ui_text_color(), 0);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
         lv_obj_align(label, LV_ALIGN_LEFT_MID, scaled_px(screen_w, 28), 0);
         lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
@@ -1514,7 +1676,7 @@ static lv_obj_t *create_settings_label(lv_obj_t *screen, const char *text,
     lv_obj_t *label = lv_label_create(screen);
 
     lv_label_set_text(label, text);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xEAF7FF), 0);
+    lv_obj_set_style_text_color(label, ui_text_color(), 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
     lv_obj_set_size(label, w, h);
     lv_obj_set_pos(label, x, y);
@@ -1525,14 +1687,14 @@ static lv_obj_t *create_settings_label(lv_obj_t *screen, const char *text,
 static void style_settings_slider(lv_obj_t *slider, int32_t screen_w, int32_t screen_h)
 {
     lv_obj_remove_style_all(slider);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x2D2D2D), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider, ui_track_color(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(slider, 0, LV_PART_MAIN);
     lv_obj_set_style_height(slider, scaled_px(screen_h, 12), LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider, theme_color(), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(slider, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0xEAF7FF), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(slider, ui_text_color(), LV_PART_KNOB);
     lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
     lv_obj_set_style_radius(slider, 0, LV_PART_KNOB);
     lv_obj_set_style_width(slider, scaled_px(screen_w, 36), LV_PART_KNOB);
@@ -1542,28 +1704,33 @@ static void style_settings_slider(lv_obj_t *slider, int32_t screen_w, int32_t sc
 static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_h, int32_t status_h)
 {
     const int32_t pad = scaled_px(screen_w, WP7_SCREEN_PAD_PERMILLE);
-    const int32_t title_y = status_h + scaled_px(screen_h, 42);
+    const int32_t content_w = screen_w - pad * 2;
+    const int32_t swatch_gap = scaled_px(screen_w, 14);
+    const int32_t swatch = (content_w - swatch_gap * 5) / 6;
+    const int32_t picker_h = swatch * 2 + swatch_gap;
+    const int32_t title_y = status_h + scaled_px(screen_h, 28);
     const int32_t title_h = scaled_px(screen_h, 72);
     const int32_t label_h = scaled_px(screen_h, 44);
     const int32_t slider_h = scaled_px(screen_h, 42);
-    const int32_t picker_h = scaled_px(screen_h, 58);
-    const int32_t brightness_label_y = title_y + scaled_px(screen_h, 98);
+    const int32_t mode_h = scaled_px(screen_h, 52);
+    const int32_t brightness_label_y = title_y + scaled_px(screen_h, 84);
     const int32_t brightness_slider_y = brightness_label_y + scaled_px(screen_h, 46);
-    const int32_t theme_label_y = brightness_slider_y + scaled_px(screen_h, 62);
+    const int32_t mode_y = brightness_slider_y + scaled_px(screen_h, 58);
+    const int32_t theme_label_y = mode_y + scaled_px(screen_h, 62);
     const int32_t theme_picker_y = theme_label_y + scaled_px(screen_h, 46);
-    const int32_t speed_label_y = theme_picker_y + scaled_px(screen_h, 76);
+    const int32_t speed_label_y = theme_picker_y + picker_h + scaled_px(screen_h, 34);
     const int32_t speed_slider_y = speed_label_y + scaled_px(screen_h, 46);
     const int32_t button_w = scaled_px(screen_w, 230);
     const int32_t button_h = scaled_px(screen_h, 70);
     const int32_t button_x = screen_w - pad - button_w;
     const int32_t button_y = speed_slider_y + scaled_px(screen_h, 62);
-    const int32_t content_w = screen_w - pad * 2;
-    const int32_t swatch = scaled_px(screen_w, 96);
-    const int32_t swatch_gap = scaled_px(screen_w, 28);
+    const int32_t mode_switch_w = scaled_px(screen_w, 150);
+    const int32_t mode_switch_h = scaled_px(screen_h, 48);
+    const int32_t mode_switch_x = scaled_px(screen_w, 132);
 
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, "UI Settings");
-    lv_obj_set_style_text_color(title, lv_color_hex(0xEAF7FF), 0);
+    lv_obj_set_style_text_color(title, ui_text_color(), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
     lv_obj_set_style_transform_pivot_x(title, 0, 0);
     lv_obj_set_style_transform_pivot_y(title, title_h / 2, 0);
@@ -1597,6 +1764,38 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     set_setting_item(WP7_SETTINGS_ITEM_BRIGHTNESS_SLIDER, brightness_slider,
                      pad, brightness_slider_y, content_w, slider_h);
 
+    lv_obj_t *mode_row = lv_obj_create(screen);
+    lv_obj_remove_style_all(mode_row);
+    lv_obj_set_size(mode_row, content_w, mode_h);
+    lv_obj_set_pos(mode_row, pad, mode_y);
+    lv_obj_remove_flag(mode_row, LV_OBJ_FLAG_SCROLLABLE);
+    set_setting_item(WP7_SETTINGS_ITEM_MODE_SWITCH, mode_row,
+                     pad, mode_y, content_w, mode_h);
+
+    lv_obj_t *light_label = lv_label_create(mode_row);
+    lv_label_set_text(light_label, "Light");
+    lv_obj_set_style_text_font(light_label, &lv_font_montserrat_24, 0);
+    lv_obj_align(light_label, LV_ALIGN_LEFT_MID, 0, 0);
+    s_wp7.mode_light_label = light_label;
+
+    lv_obj_t *mode_switch = lv_switch_create(mode_row);
+    lv_obj_set_size(mode_switch, mode_switch_w, mode_switch_h);
+    lv_obj_set_pos(mode_switch, mode_switch_x, (mode_h - mode_switch_h) / 2);
+    lv_obj_set_style_radius(mode_switch, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(mode_switch, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(mode_switch, 0, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_add_event_cb(mode_switch, settings_mode_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_wp7.mode_switch = mode_switch;
+
+    lv_obj_t *dark_label = lv_label_create(mode_row);
+    lv_label_set_text(dark_label, "Dark");
+    lv_obj_set_style_text_font(dark_label, &lv_font_montserrat_24, 0);
+    lv_obj_align_to(dark_label, mode_switch, LV_ALIGN_OUT_RIGHT_MID, scaled_px(screen_w, 30), 0);
+    s_wp7.mode_dark_label = dark_label;
+
     lv_obj_t *theme_label = create_settings_label(screen, "Theme color",
                                                   pad, theme_label_y,
                                                   content_w, label_h);
@@ -1613,14 +1812,20 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
                      pad, theme_picker_y, content_w, picker_h);
 
     for (int32_t i = 0; i < WP7_THEME_COLOR_COUNT; i++) {
+        const int32_t swatch_col = i % 6;
+        const int32_t swatch_row = i / 6;
         lv_obj_t *swatch_obj = lv_obj_create(theme_picker);
+
         lv_obj_remove_style_all(swatch_obj);
         lv_obj_set_size(swatch_obj, swatch, swatch);
-        lv_obj_set_pos(swatch_obj, i * (swatch + swatch_gap), 0);
+        lv_obj_set_pos(swatch_obj,
+                       swatch_col * (swatch + swatch_gap),
+                       swatch_row * (swatch + swatch_gap));
         lv_obj_set_style_bg_color(swatch_obj, lv_color_hex(s_wp7_theme_colors[i]), 0);
         lv_obj_set_style_bg_opa(swatch_obj, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(swatch_obj, 0, 0);
         lv_obj_set_style_border_opa(swatch_obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(swatch_obj, 0, 0);
         lv_obj_remove_flag(swatch_obj, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(swatch_obj, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(swatch_obj, settings_theme_clicked_cb,
@@ -1698,8 +1903,10 @@ static void create_wp7_first_screen(void)
         .anim_speed_percent = WP7_ANIM_SPEED_DEFAULT,
         .brightness_percent = WP7_BRIGHTNESS_DEFAULT,
         .theme_index = 0,
+        .dark_mode = true,
     };
     load_ui_settings();
+    lv_obj_set_style_bg_color(screen, ui_bg_color(), 0);
 
     create_status_bar(screen, screen_w, status_h, pad);
     create_tile_grid(screen, screen_w, screen_h, status_h);
