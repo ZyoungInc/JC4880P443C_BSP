@@ -1,0 +1,28 @@
+dependencies:
+  esp_codec_dev:
+    path: ../espressif__esp_codec_dev
+    public: true
+  esp_lcd_touch:
+    path: ../espressif__esp_lcd_touch
+    public: true
+  esp_lcd_touch_gt911:
+    path: ../espressif__esp_lcd_touch_gt911
+  esp_lcd_st7701:
+    path: ../espressif__esp_lcd_st7701
+  espressif/esp_lvgl_port:
+    public: true
+    version: ^2
+  chmorgan/esp-audio-player:
+    version: "1.0.*"
+    public: true
+  chmorgan/esp-file-iterator:
+    version: "1.0.0"
+    public: true
+  idf: '>=5.3'
+  lvgl/lvgl: '>=8,<10'
+description: Board Support Package (BSP) for JC4880P443C
+tags:
+- bsp
+targets:
+- esp32p4
+version: 0.1.0
