@@ -22,8 +22,8 @@
 #define WP7_DRAG_DISTANCE_PERMILLE   550
 #define WP7_DRAG_THRESHOLD_PERMILLE  20
 #define WP7_RELEASE_COMMIT_PERMILLE  220
-#define WP7_MAX_PROGRESS_PER_MS      24
-#define WP7_RELEASE_MIN_MS           220
+#define WP7_MAX_PROGRESS_PER_MS      12
+#define WP7_RELEASE_MIN_MS           360
 
 typedef struct {
     lv_obj_t *obj;
