@@ -45,7 +45,7 @@
 #define WP7_BRIGHTNESS_MIN           5
 #define WP7_BRIGHTNESS_DEFAULT       100
 #define WP7_BRIGHTNESS_MAX           100
-#define WP7_THEME_COLOR_COUNT        12
+#define WP7_THEME_COLOR_COUNT        10
 #define WP7_NVS_NAMESPACE            "wp7_ui"
 #define WP7_NVS_SPEED_KEY            "anim_spd"
 #define WP7_NVS_BRIGHTNESS_KEY       "bright"
@@ -54,6 +54,8 @@
 
 typedef struct {
     lv_obj_t *obj;
+    lv_obj_t *icon;
+    lv_obj_t *icon_label;
     lv_obj_t *label;
     int32_t x;
     int32_t y;
@@ -109,8 +111,7 @@ typedef struct {
     lv_obj_t *settings_title;
     lv_obj_t *brightness_slider;
     lv_obj_t *mode_switch;
-    lv_obj_t *mode_light_label;
-    lv_obj_t *mode_dark_label;
+    lv_obj_t *mode_label;
     lv_obj_t *theme_picker;
     lv_obj_t *theme_buttons[WP7_THEME_COLOR_COUNT];
     lv_obj_t *settings_slider;
@@ -148,18 +149,16 @@ typedef struct {
 static wp7_screen_t s_wp7;
 
 static const uint32_t s_wp7_theme_colors[WP7_THEME_COLOR_COUNT] = {
-    0x61C9FF,
-    0x00A300,
-    0xB4009E,
-    0x6A00FF,
+    0xFF0097,
+    0xA200FF,
     0x00ABA9,
-    0xFA6800,
-    0xE51400,
-    0xA20025,
-    0xF0A30A,
+    0x8CBF26,
+    0xA05000,
+    0xE671B8,
+    0xF09609,
     0x1BA1E2,
-    0x0050EF,
-    0x6D8764,
+    0xE51400,
+    0x339933,
 };
 
 static int32_t scaled_px(int32_t base, int32_t permille)
@@ -482,6 +481,16 @@ static void apply_theme_to_tiles(void)
             lv_obj_set_style_text_color(s_wp7.tiles[i].label, theme_text_color(), 0);
         }
     }
+
+    for (int32_t i = 0; i < s_wp7.list_count; i++) {
+        if (s_wp7.list_items[i].icon != NULL) {
+            lv_obj_set_style_bg_color(s_wp7.list_items[i].icon, theme_color(), 0);
+        }
+
+        if (s_wp7.list_items[i].icon_label != NULL) {
+            lv_obj_set_style_text_color(s_wp7.list_items[i].icon_label, theme_text_color(), 0);
+        }
+    }
 }
 
 static void apply_color_scheme(void)
@@ -547,14 +556,8 @@ static void apply_color_scheme(void)
         lv_obj_set_style_bg_color(s_wp7.mode_switch, ui_text_color(), LV_PART_KNOB);
     }
 
-    if (s_wp7.mode_light_label != NULL) {
-        lv_obj_set_style_text_color(s_wp7.mode_light_label,
-                                    s_wp7.dark_mode ? ui_disabled_text_color() : ui_text_color(), 0);
-    }
-
-    if (s_wp7.mode_dark_label != NULL) {
-        lv_obj_set_style_text_color(s_wp7.mode_dark_label,
-                                    s_wp7.dark_mode ? ui_text_color() : ui_disabled_text_color(), 0);
+    if (s_wp7.mode_label != NULL) {
+        lv_obj_set_style_text_color(s_wp7.mode_label, ui_text_color(), 0);
     }
 }
 
@@ -637,7 +640,15 @@ static void set_list_item_geometry(wp7_list_item_t *item, int32_t x)
     lv_obj_remove_flag(item->obj, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_pos(item->obj, x, item->y);
     lv_obj_set_size(item->obj, item->w, item->h);
-    lv_obj_align(item->label, LV_ALIGN_LEFT_MID, scaled_px(s_wp7.screen_w, 28), 0);
+
+    if (item->icon != NULL) {
+        lv_obj_align(item->icon, LV_ALIGN_LEFT_MID, 0, 0);
+    }
+
+    if (item->label != NULL && item->icon != NULL) {
+        lv_obj_align_to(item->label, item->icon, LV_ALIGN_OUT_RIGHT_MID,
+                        scaled_px(s_wp7.screen_w, 28), 0);
+    }
 }
 
 static void set_setting_item_geometry(wp7_setting_item_t *item, int32_t x, lv_opa_t opa)
@@ -1616,11 +1627,12 @@ static void create_list_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_
         "Store",
         "Office",
     };
-    const int32_t pad = scaled_px(screen_w, WP7_SCREEN_PAD_PERMILLE);
     const int32_t gap = scaled_px(screen_h, WP7_LIST_ROW_GAP_PERMILLE);
     const int32_t row_h = scaled_px(screen_h, WP7_LIST_ROW_H_PERMILLE);
-    const int32_t content_top = status_h + pad;
-    const int32_t row_w = screen_w - pad * 2;
+    const int32_t content_top = status_h + scaled_px(screen_h, 72);
+    const int32_t row_w = scaled_px(screen_w, 700);
+    const int32_t row_x = (screen_w - row_w) / 2;
+    const int32_t icon_size = row_h * 7 / 10;
 
     s_wp7.list_count = s_wp7.tile_count;
 
@@ -1632,24 +1644,43 @@ static void create_list_page(lv_obj_t *screen, int32_t screen_w, int32_t screen_
         lv_obj_t *item_obj = lv_obj_create(screen);
         lv_obj_remove_style_all(item_obj);
         lv_obj_set_size(item_obj, row_w, row_h);
-        lv_obj_set_pos(item_obj, pad, content_top + i * (row_h + gap));
+        lv_obj_set_pos(item_obj, row_x, content_top + i * (row_h + gap));
         lv_obj_set_style_bg_color(item_obj, ui_bg_color(), 0);
         lv_obj_set_style_bg_opa(item_obj, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(item_obj, 0, 0);
         lv_obj_remove_flag(item_obj, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(item_obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
 
+        lv_obj_t *icon = lv_obj_create(item_obj);
+        lv_obj_remove_style_all(icon);
+        lv_obj_set_size(icon, icon_size, icon_size);
+        lv_obj_set_style_bg_color(icon, theme_color(), 0);
+        lv_obj_set_style_bg_opa(icon, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(icon, 0, 0);
+        lv_obj_align(icon, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_remove_flag(icon, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+
+        lv_obj_t *icon_label = lv_label_create(icon);
+        lv_label_set_text_fmt(icon_label, "%c", item_labels[i % (sizeof(item_labels) / sizeof(item_labels[0]))][0]);
+        lv_obj_set_style_text_color(icon_label, theme_text_color(), 0);
+        lv_obj_set_style_text_font(icon_label, &lv_font_montserrat_20, 0);
+        lv_obj_center(icon_label);
+        lv_obj_add_flag(icon_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+
         lv_obj_t *label = lv_label_create(item_obj);
         lv_label_set_text(label, item_labels[i % (sizeof(item_labels) / sizeof(item_labels[0]))]);
         lv_obj_set_style_text_color(label, ui_text_color(), 0);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
-        lv_obj_align(label, LV_ALIGN_LEFT_MID, scaled_px(screen_w, 28), 0);
+        lv_obj_align_to(label, icon, LV_ALIGN_OUT_RIGHT_MID, scaled_px(screen_w, 28), 0);
         lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
 
         wp7_list_item_t *item_data = &s_wp7.list_items[i];
         item_data->obj = item_obj;
+        item_data->icon = icon;
+        item_data->icon_label = icon_label;
         item_data->label = label;
-        item_data->x = pad;
+        item_data->x = row_x;
         item_data->y = content_top + i * (row_h + gap);
         item_data->w = row_w;
         item_data->h = row_h;
@@ -1705,8 +1736,9 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
 {
     const int32_t pad = scaled_px(screen_w, WP7_SCREEN_PAD_PERMILLE);
     const int32_t content_w = screen_w - pad * 2;
+    const int32_t theme_columns = 5;
     const int32_t swatch_gap = scaled_px(screen_w, 14);
-    const int32_t swatch = (content_w - swatch_gap * 5) / 6;
+    const int32_t swatch = (content_w - swatch_gap * (theme_columns - 1)) / theme_columns;
     const int32_t picker_h = swatch * 2 + swatch_gap;
     const int32_t title_y = status_h + scaled_px(screen_h, 28);
     const int32_t title_h = scaled_px(screen_h, 72);
@@ -1726,7 +1758,7 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     const int32_t button_y = speed_slider_y + scaled_px(screen_h, 62);
     const int32_t mode_switch_w = scaled_px(screen_w, 150);
     const int32_t mode_switch_h = scaled_px(screen_h, 48);
-    const int32_t mode_switch_x = scaled_px(screen_w, 132);
+    const int32_t mode_switch_x = content_w - mode_switch_w;
 
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, "UI Settings");
@@ -1772,11 +1804,11 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     set_setting_item(WP7_SETTINGS_ITEM_MODE_SWITCH, mode_row,
                      pad, mode_y, content_w, mode_h);
 
-    lv_obj_t *light_label = lv_label_create(mode_row);
-    lv_label_set_text(light_label, "Light");
-    lv_obj_set_style_text_font(light_label, &lv_font_montserrat_24, 0);
-    lv_obj_align(light_label, LV_ALIGN_LEFT_MID, 0, 0);
-    s_wp7.mode_light_label = light_label;
+    lv_obj_t *mode_label = lv_label_create(mode_row);
+    lv_label_set_text(mode_label, "Dark mode");
+    lv_obj_set_style_text_font(mode_label, &lv_font_montserrat_24, 0);
+    lv_obj_align(mode_label, LV_ALIGN_LEFT_MID, 0, 0);
+    s_wp7.mode_label = mode_label;
 
     lv_obj_t *mode_switch = lv_switch_create(mode_row);
     lv_obj_set_size(mode_switch, mode_switch_w, mode_switch_h);
@@ -1789,12 +1821,6 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
     lv_obj_set_style_bg_opa(mode_switch, LV_OPA_COVER, LV_PART_KNOB);
     lv_obj_add_event_cb(mode_switch, settings_mode_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
     s_wp7.mode_switch = mode_switch;
-
-    lv_obj_t *dark_label = lv_label_create(mode_row);
-    lv_label_set_text(dark_label, "Dark");
-    lv_obj_set_style_text_font(dark_label, &lv_font_montserrat_24, 0);
-    lv_obj_align_to(dark_label, mode_switch, LV_ALIGN_OUT_RIGHT_MID, scaled_px(screen_w, 30), 0);
-    s_wp7.mode_dark_label = dark_label;
 
     lv_obj_t *theme_label = create_settings_label(screen, "Theme color",
                                                   pad, theme_label_y,
@@ -1812,8 +1838,8 @@ static void create_settings_page(lv_obj_t *screen, int32_t screen_w, int32_t scr
                      pad, theme_picker_y, content_w, picker_h);
 
     for (int32_t i = 0; i < WP7_THEME_COLOR_COUNT; i++) {
-        const int32_t swatch_col = i % 6;
-        const int32_t swatch_row = i / 6;
+        const int32_t swatch_col = i % theme_columns;
+        const int32_t swatch_row = i / theme_columns;
         lv_obj_t *swatch_obj = lv_obj_create(theme_picker);
 
         lv_obj_remove_style_all(swatch_obj);
